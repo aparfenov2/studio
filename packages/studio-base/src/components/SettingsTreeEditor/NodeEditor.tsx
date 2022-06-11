@@ -18,7 +18,7 @@ import memoizeWeak from "memoize-weak";
 import { useState } from "react";
 import { DeepReadonly } from "ts-essentials";
 
-import CommonIcons from "@foxglove/studio-base/components/CommonIcons";
+import * as CommonIcons from "@foxglove/studio-base/components/CommonIcons";
 import Stack from "@foxglove/studio-base/components/Stack";
 
 import { FieldEditor } from "./FieldEditor";

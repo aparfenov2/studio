@@ -79,6 +79,14 @@ const builtin: PanelInfo[] = [
     module: async () => await import("./Image"),
   },
   {
+    title: "Indicator",
+    type: "Indicator",
+    description: "Display a colored or textual indicator based on a threshold value.",
+    help: undefined, // FIXME
+    thumbnail: undefined, // FIXME
+    module: async () => await import("./Indicator"),
+  },
+  {
     title: "Teleop",
     type: "Teleop",
     description: "Teleoperate a robot over a live connection.",

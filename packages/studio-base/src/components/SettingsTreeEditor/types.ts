@@ -2,7 +2,7 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
-import CommonIcons from "@foxglove/studio-base/components/CommonIcons";
+import * as CommonIcons from "@foxglove/studio-base/components/CommonIcons";
 
 export type SettingsTreeFieldValue =
   | { input: "autocomplete"; value?: string; items: ReadonlyArray<string> }
@@ -89,7 +89,7 @@ export type SettingsTreeNodeAction = {
 
 export type SettingsTreeNode = {
   /**
-   * An array of actions that can be performeed on this node.
+   * An array of actions that can be performed on this node.
    */
   actions?: SettingsTreeNodeAction[];
 
