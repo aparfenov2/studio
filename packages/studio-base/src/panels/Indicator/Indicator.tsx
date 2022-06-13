@@ -9,7 +9,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { MessageEvent, PanelExtensionContext } from "@foxglove/studio";
 import parseRosPath from "@foxglove/studio-base/components/MessagePathSyntax/parseRosPath";
-// import { useCachedGetMessagePathDataItems } from "@foxglove/studio-base/components/MessagePathSyntax/useCachedGetMessagePathDataItems";
+import { simpleGetMessagePathDataItem } from "@foxglove/studio-base/components/MessagePathSyntax/simpleGetMessagePathDataItem";
 import {
   EXPERIMENTAL_PanelExtensionContextWithSettings,
   SettingsTreeAction,
@@ -110,16 +110,11 @@ export function Indicator({ context }: Props): JSX.Element {
   const theme = useTheme();
   const [latestMessage, setLatestMessage] = useState<MessageEvent<unknown> | undefined>(undefined);
 
-  // const getMessagePathDataItems = useCachedGetMessagePathDataItems([path]);
-
-  // const queriedData = useMemo(
-  //   () =>
-  //     latestMessage == undefined
-  //       ? undefined
-  //       : last(getMessagePathDataItems(path, latestMessage))?.value,
-  //   [getMessagePathDataItems, path, latestMessage],
-  // );
-  const queriedData = 42;
+  const queriedData = useMemo(() => {
+    return parsedPath && latestMessage
+      ? simpleGetMessagePathDataItem(latestMessage, parsedPath)
+      : undefined;
+  }, [parsedPath, latestMessage]);
 
   useEffect(() => {
     context.onRender = (renderState, done) => {
@@ -135,6 +130,7 @@ export function Indicator({ context }: Props): JSX.Element {
         setLatestMessage(message);
       }
     };
+    context.watch("currentFrame");
 
     return () => {
       context.onRender = undefined;
