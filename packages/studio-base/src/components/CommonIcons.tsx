@@ -6,6 +6,7 @@ export { default as Add } from "@mui/icons-material/Add";
 export { default as Background } from "@mui/icons-material/Layers";
 export { default as Camera } from "@mui/icons-material/PhotoCamera";
 export { default as Cells } from "@mui/icons-material/ViewComfy";
+export { default as Check } from "@mui/icons-material/Check";
 export { default as Circle } from "@mui/icons-material/Circle";
 export { default as Clock } from "@mui/icons-material/AccessTime";
 export { default as Collapse } from "@mui/icons-material/UnfoldLess";

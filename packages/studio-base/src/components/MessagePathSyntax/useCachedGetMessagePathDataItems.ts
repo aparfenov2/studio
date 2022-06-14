@@ -100,7 +100,11 @@ export function useCachedGetMessagePathDataItems(
 
   const unmemoizedRelevantDatatypes = useMemo(() => {
     const relevantDatatypes: RosDatatypes = new Map();
-    function addRelevantDatatype(datatypeName: string) {
+    function addRelevantDatatype(datatypeName: string, seen: string[]) {
+      if (seen.includes(datatypeName)) {
+        return;
+      }
+
       const type = datatypes.get(datatypeName);
       if (type) {
         relevantDatatypes.set(datatypeName, type);
@@ -109,13 +113,13 @@ export function useCachedGetMessagePathDataItems(
             field.isComplex === true ||
             extractTypeFromStudioEnumAnnotation(field.name) != undefined
           ) {
-            addRelevantDatatype(field.type);
+            addRelevantDatatype(field.type, [...seen, datatypeName]);
           }
         }
       }
     }
     for (const { datatype } of relevantTopics.values()) {
-      addRelevantDatatype(datatype);
+      addRelevantDatatype(datatype, []);
     }
     return relevantDatatypes;
   }, [datatypes, relevantTopics]);
