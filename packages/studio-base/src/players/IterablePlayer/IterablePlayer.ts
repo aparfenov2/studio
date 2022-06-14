@@ -152,13 +152,6 @@ export class IterablePlayer implements Player {
 
   private _problemManager = new PlayerProblemManager();
 
-  // How long of a duration to use for requesting messages from an iterator. This determines the end arg to
-  // iterator calls.
-  //
-  // NOTE: It is important that iterators are created with a bounded end so that loops which want to
-  // exit after reaching a specific time can do so even if the iterator does not emit any messages.
-  private _iteratorDurationNanos: number = 1e9;
-
   // Blocks is a sparse array of MessageBlock.
   private _blocks: (MessageBlock | undefined)[] = [];
   private _blockDurationNanos: number = 0;
@@ -168,8 +161,8 @@ export class IterablePlayer implements Player {
   // Some states register an abort controller to signal they should abort
   private _abort?: AbortController;
 
-  // The iterator for processing ticks. This persists between tick calls and is cleared when changing state.
-  private _tickIterator?: AsyncIterator<Readonly<IteratorResult>>;
+  // The iterator for reading messages during playback
+  private _playbackIterator?: AsyncIterator<Readonly<IteratorResult>>;
 
   private readonly _sourceId: string;
 
@@ -312,10 +305,8 @@ export class IterablePlayer implements Player {
       this._abort = undefined;
     }
 
-    if (this._tickIterator) {
-      this._tickIterator.return?.().catch((err) => log.error(err));
-      this._tickIterator = undefined;
-    }
+    // fixme - should the playbackIterator be cleared?
+    // no because we might just be pausing and then resuming so we don't want to clear the player
 
     void this._runState();
   }
@@ -445,7 +436,6 @@ export class IterablePlayer implements Player {
       );
 
       if (blockDurationNanos != undefined) {
-        this._iteratorDurationNanos = blockDurationNanos;
         this._blockDurationNanos = blockDurationNanos;
       }
 
@@ -593,9 +583,19 @@ export class IterablePlayer implements Player {
       await seekAckWait;
     }
 
+    // fixme - what if we change to playing state before the backfill is complete?
     if (this._nextState) {
       return;
     }
+
+    // fixme - if next is past the end then there's nothing to play
+    const next = add(targetTime, { sec: 0, nsec: 1 });
+
+    // set the playIterator to the seek time
+    this._playbackIterator = this._iterableSource.messageIterator({
+      topics: Array.from(this._allTopics),
+      start: next,
+    });
 
     this._currentTime = targetTime;
     this._lastSeekEmitTime = Date.now();
@@ -729,7 +729,14 @@ export class IterablePlayer implements Player {
       this._lastMessage = undefined;
     }
 
+    // Read from the iterator through the end of the tick time
     for (;;) {
+      // fixme - should this be checked sooner?
+      if (!this._playbackIterator) {
+        break;
+      }
+      // fixme - need to make new playbackIterator when topics have changed
+      /*
       // If we have no forward iterator then we create one at 1 nanosecond past the current time.
       // currentTime is assumed to have already been read previously
       if (!this._tickIterator) {
@@ -739,28 +746,30 @@ export class IterablePlayer implements Player {
           break;
         }
 
-        const iteratorEnd = add(next, fromNanoSec(BigInt(this._iteratorDurationNanos)));
+        // fixme - no end for our iterator, it goes until the end of the data stream
+        //const iteratorEnd = add(next, fromNanoSec(BigInt(this._iteratorDurationNanos)));
 
         // Our iterator might not produce any messages, so we set the lastMessageTime to the iterator
         // end range so if we need to make another iterator in this same tick we don't include time
         // which we've already iterated over.
-        lastMessageTime = iteratorEnd;
+        //lastMessageTime = iteratorEnd;
 
-        log.debug("Initializing forward iterator from", next, "to", iteratorEnd);
+        log.debug("Initializing forward iterator from", next);
 
         this._tickIterator = this._iterableSource.messageIterator({
           topics: Array.from(this._allTopics),
           start: next,
-          end: iteratorEnd,
         });
       }
+      */
 
-      const result = await this._tickIterator.next();
+      const result = await this._playbackIterator.next();
       if (result.done === true) {
         if (this._nextState) {
           return;
         }
 
+        /* fixme
         // Our current iterator has completed but we might still have more to read to reach _end_.
         // Start a new iterator at 1 nanosecond past the last message we've processed. Iterators
         // are always inclusive so when our iterator has ended we know we've seen every message up-to
@@ -769,6 +778,7 @@ export class IterablePlayer implements Player {
           this._tickIterator = undefined;
           continue;
         }
+        */
 
         break;
       }
@@ -788,7 +798,7 @@ export class IterablePlayer implements Player {
         continue;
       }
 
-      // The message is past the end time, we need to save it for next tick
+      // The message is past the tick end time, we need to save it for next tick
       if (compare(iterResult.msgEvent.receiveTime, end) > 0) {
         this._lastMessage = iterResult.msgEvent;
         break;
@@ -844,9 +854,11 @@ export class IterablePlayer implements Player {
           // Discard any last message event since the new iterator will repeat it
           this._lastMessage = undefined;
 
+          // fixme - go into a state to reset the playbackIterator?
+          // or just reset the playback iterator here?
           // Clear the current forward iterator and tick will initialize it again
-          await this._tickIterator?.return?.();
-          this._tickIterator = undefined;
+          //await this._tickIterator?.return?.();
+          //this._tickIterator = undefined;
 
           allTopics = this._allTopics;
         }
@@ -876,8 +888,8 @@ export class IterablePlayer implements Player {
     this._isPlaying = false;
     this._closed = true;
     this._metricsCollector.close();
-    this._tickIterator?.return?.().catch((err) => log.error(err));
-    this._tickIterator = undefined;
+    this._playbackIterator?.return?.().catch((err) => log.error(err));
+    this._playbackIterator = undefined;
   }
 
   private async loadBlocks(time: Time, opt?: { emit: boolean }) {
