@@ -16,6 +16,17 @@ import {
 
 import { Config, Rule } from "./types";
 
+function ruleToString(rule: Rule): string {
+  const operator = {
+    "=": "=",
+    "<": "<",
+    "<=": "≤",
+    ">": ">",
+    ">=": "≥",
+  }[rule.operator];
+  return `data ${operator} ${rule.rawValue}`;
+}
+
 export function settingsActionReducer(prevConfig: Config, action: SettingsTreeAction): Config {
   return produce(prevConfig, (draft) => {
     switch (action.action) {
@@ -30,7 +41,7 @@ export function settingsActionReducer(prevConfig: Config, action: SettingsTreeAc
             action.payload.id === "add-rule-below"
           ) {
             let insertIndex = draft.rules.length;
-            if (action.payload.id === "add-rule-above") {
+            if (action.payload.id === "add-rule-above" && action.payload.path[1] !== "default") {
               insertIndex = +action.payload.path[1]!;
             } else if (action.payload.id === "add-rule-below") {
               insertIndex = +action.payload.path[1]! + 1;
@@ -74,14 +85,19 @@ export function settingsActionReducer(prevConfig: Config, action: SettingsTreeAc
 const memoizedCreateRuleNode = memoizeWeak(
   (rule: Rule, i: number, rules: readonly Rule[]): SettingsTreeNode => {
     const actions: (SettingsTreeNodeAction | false)[] = [
-      { id: "delete-rule", label: "Delete rule", icon: "Delete" },
-      i > 0 && { id: "move-up", label: "Move up", icon: "MoveUp" },
-      i < rules.length - 1 && { id: "move-down", label: "Move down", icon: "MoveDown" },
-      { id: "add-rule-above", label: "Add rule above", icon: "Add" },
-      { id: "add-rule-below", label: "Add rule below", icon: "Add" },
+      { type: "action", id: "delete-rule", label: "Delete rule", icon: "Delete" },
+      i > 0 && { type: "action", id: "move-up", label: "Move up", icon: "MoveUp" },
+      i < rules.length - 1 && {
+        type: "action",
+        id: "move-down",
+        label: "Move down",
+        icon: "MoveDown",
+      },
+      { type: "action", id: "add-rule-above", label: "Add rule above", icon: "Add" },
+      { type: "action", id: "add-rule-below", label: "Add rule below", icon: "Add" },
     ];
     return {
-      label: `Rule ${i + 1}`,
+      label: ruleToString(rule),
       actions: actions.filter((action): action is SettingsTreeNodeAction => action !== false),
       fields: {
         operator: {
@@ -117,10 +133,11 @@ const memoizedCreateRuleNode = memoizeWeak(
   },
 );
 
-export function useSettingsTree(config: Config): SettingsTreeRoots {
-  const { path, style, fallbackColor, fallbackLabel, rules } = config;
+export function useSettingsTree(config: Config, error: string | undefined): SettingsTreeRoots {
+  const { path, style, rules } = config;
   const generalSettings: SettingsTreeNode = useMemo(
     () => ({
+      error,
       fields: {
         path: {
           label: "Data",
@@ -133,35 +150,50 @@ export function useSettingsTree(config: Config): SettingsTreeRoots {
           value: style,
           options: [
             { label: "Circle", value: "circle" },
-            { label: "Full", value: "full" },
+            { label: "Background", value: "background" },
           ],
-        },
-        fallbackColor: {
-          label: "Default color",
-          input: "rgb",
-          value: fallbackColor,
-          help: "Color to use when no rules match",
-        },
-        fallbackLabel: {
-          label: "Default label",
-          input: "string",
-          value: fallbackLabel,
-          help: "Label to use when no rules match",
         },
       },
     }),
-    [fallbackColor, fallbackLabel, path, style],
+    [error, path, style],
   );
 
+  const { fallbackColor, fallbackLabel } = config;
   const ruleSettings: SettingsTreeNode = useMemo(
     () => ({
-      label: "Rules",
-      actions: [{ id: "add-rule", label: "Add rule", icon: "Add" }],
+      label: "Rules (first matching rule wins)",
+      actions: [{ type: "action", id: "add-rule", label: "Add rule", icon: "Add" }],
       children: Object.fromEntries(
-        rules.map((rule, i) => [i, memoizedCreateRuleNode(rule, i, rules)]),
+        rules
+          .map((rule, i) => [i.toString(), memoizedCreateRuleNode(rule, i, rules)])
+          .concat([
+            [
+              "default",
+              {
+                label: "Otherwise",
+                fields: {
+                  fallbackColor: {
+                    label: "Color",
+                    input: "rgb",
+                    value: fallbackColor,
+                    help: "Color to use when no other rules match",
+                  },
+                  fallbackLabel: {
+                    label: "Label",
+                    input: "string",
+                    value: fallbackLabel,
+                    help: "Label to use when no other rules match",
+                  },
+                },
+                actions: [
+                  { type: "action", id: "add-rule-above", label: "Add rule above", icon: "Add" },
+                ],
+              },
+            ],
+          ]),
       ),
     }),
-    [rules],
+    [fallbackColor, fallbackLabel, rules],
   );
 
   return useShallowMemo({

@@ -9,7 +9,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useState 
 import { MessageEvent, PanelExtensionContext } from "@foxglove/studio";
 import { RosPath } from "@foxglove/studio-base/components/MessagePathSyntax/constants";
 import parseRosPath from "@foxglove/studio-base/components/MessagePathSyntax/parseRosPath";
-import { simpleGetMessagePathDataItem } from "@foxglove/studio-base/components/MessagePathSyntax/simpleGetMessagePathDataItem";
+import { simpleGetMessagePathDataItems } from "@foxglove/studio-base/components/MessagePathSyntax/simpleGetMessagePathDataItems";
 import {
   EXPERIMENTAL_PanelExtensionContextWithSettings,
   SettingsTreeAction,
@@ -45,6 +45,7 @@ type State = {
   parsedPath: RosPath | undefined;
   latestMessage: MessageEvent<unknown> | undefined;
   latestMatchingQueriedData: unknown | undefined;
+  error: Error | undefined;
 };
 
 type Action =
@@ -52,35 +53,48 @@ type Action =
   | { type: "path"; path: string }
   | { type: "seek" };
 
-function reducer(state: State, action: Action): State {
-  switch (action.type) {
-    case "message": {
-      const data = state.parsedPath
-        ? simpleGetMessagePathDataItem(action.message, state.parsedPath)
-        : undefined;
-      return {
-        ...state,
-        latestMessage: action.message,
-        latestMatchingQueriedData: data ?? state.latestMatchingQueriedData,
-      };
-    }
-    case "path":
-      return {
-        ...state,
-        path: action.path,
-        parsedPath: parseRosPath(action.path),
-        latestMatchingQueriedData:
-          state.parsedPath && state.latestMessage
-            ? simpleGetMessagePathDataItem(state.latestMessage, state.parsedPath)
-            : undefined,
-      };
+function getSingleDataItem(results: unknown[]) {
+  return results.length === 1 ? results[0] : undefined;
+}
 
-    case "seek":
-      return {
-        ...state,
-        latestMessage: undefined,
-        latestMatchingQueriedData: undefined,
-      };
+function reducer(state: State, action: Action): State {
+  try {
+    switch (action.type) {
+      case "message": {
+        const data = state.parsedPath
+          ? getSingleDataItem(simpleGetMessagePathDataItems(action.message, state.parsedPath))
+          : undefined;
+        return {
+          ...state,
+          latestMessage: action.message,
+          latestMatchingQueriedData: data ?? state.latestMatchingQueriedData,
+          error: undefined,
+        };
+      }
+      case "path":
+        return {
+          ...state,
+          path: action.path,
+          parsedPath: parseRosPath(action.path),
+          latestMatchingQueriedData:
+            state.parsedPath && state.latestMessage
+              ? getSingleDataItem(
+                  simpleGetMessagePathDataItems(state.latestMessage, state.parsedPath),
+                )
+              : undefined,
+          error: undefined,
+        };
+
+      case "seek":
+        return {
+          ...state,
+          latestMessage: undefined,
+          latestMatchingQueriedData: undefined,
+          error: undefined,
+        };
+    }
+  } catch (error) {
+    return { ...state, latestMessage: undefined, latestMatchingQueriedData: undefined, error };
   }
 }
 
@@ -102,6 +116,7 @@ export function Indicator({ context }: Props): JSX.Element {
       parsedPath: parseRosPath(path),
       latestMessage: undefined,
       latestMatchingQueriedData: undefined,
+      error: undefined,
     }),
   );
 
@@ -147,7 +162,7 @@ export function Indicator({ context }: Props): JSX.Element {
     [setConfig],
   );
 
-  const settingsTree = useSettingsTree(config);
+  const settingsTree = useSettingsTree(config, state.error?.message);
   useEffect(() => {
     // eslint-disable-next-line no-underscore-dangle
     (
@@ -191,7 +206,8 @@ export function Indicator({ context }: Props): JSX.Element {
           alignItems: "center",
           overflow: "hidden",
           padding: 8,
-          backgroundColor: style === "full" ? matchingRule?.color ?? fallbackColor : undefined,
+          backgroundColor:
+            style === "background" ? matchingRule?.color ?? fallbackColor : undefined,
         }}
       >
         <Stack horizontal verticalAlign="center" tokens={{ childrenGap: theme.spacing.m }}>
@@ -215,10 +231,11 @@ export function Indicator({ context }: Props): JSX.Element {
             style={{
               fontFamily: fonts.MONOSPACE,
               color:
-                style === "full"
+                style === "background"
                   ? getTextColorForBackground(matchingRule?.color ?? fallbackColor)
                   : matchingRule?.color ?? fallbackColor,
               fontSize: theme.fonts.xxLarge.fontSize,
+              whiteSpace: "pre",
             }}
           >
             {matchingRule?.label ?? fallbackLabel}

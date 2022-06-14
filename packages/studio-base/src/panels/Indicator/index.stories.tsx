@@ -58,12 +58,12 @@ export const MissingValue = (): JSX.Element => {
   );
 };
 
-export const FullStyle = (): JSX.Element => {
+export const BackgroundStyle = (): JSX.Element => {
   return (
     <Indicator
       overrideConfig={{
         path: "/data.value",
-        style: "full",
+        style: "background",
         rules: [
           { operator: "=", rawValue: "true", color: "#00dd00", label: "True" },
           { operator: "=", rawValue: "true", color: "#dd00dd", label: "False" },
