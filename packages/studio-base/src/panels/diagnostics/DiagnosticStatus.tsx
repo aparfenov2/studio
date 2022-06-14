@@ -93,20 +93,17 @@ const useStyles = makeStyles((theme: Theme) => ({
   table: {
     tableLayout: "fixed",
     width: "100%",
-    lineHeight: "1.3em",
+    lineHeight: 1.3,
     whiteSpace: "pre-line",
     overflowWrap: "break-word",
     textAlign: "left",
     border: "none",
 
     "& td": {
-      lineHeight: "1.3em",
-      border: "none",
-      padding: "1px 3px",
+      padding: theme.spacing(0.1, 1),
     },
     "& th": {
-      lineHeight: "1.3em",
-      padding: "1px 3px",
+      padding: theme.spacing(0.75, 1, 0, 1),
     },
   },
   name: {
@@ -114,9 +111,8 @@ const useStyles = makeStyles((theme: Theme) => ({
   },
   sectionHeader: {
     color: colors.HIGHLIGHT,
-    textAlign: "center",
-    fontSize: "1.2em",
-    padding: 4,
+    fontSize: "1.1em",
+    padding: theme.spacing(0.5),
     cursor: "pointer",
     border: "none",
   },
@@ -135,7 +131,7 @@ const useStyles = makeStyles((theme: Theme) => ({
     cursor: "pointer",
 
     "&:nth-child(odd)": {
-      backgroundColor: theme.palette.action.hover,
+      backgroundColor: theme.palette.mode === "dark" ? "#ffffff08" : "#00000008",
     },
     "&:hover": {
       backgroundColor: theme.palette.action.focus,
