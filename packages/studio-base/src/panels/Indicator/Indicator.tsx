@@ -47,7 +47,10 @@ type State = {
   latestMatchingQueriedData: unknown | undefined;
 };
 
-type Action = { type: "message"; message: MessageEvent<unknown> } | { type: "path"; path: string };
+type Action =
+  | { type: "message"; message: MessageEvent<unknown> }
+  | { type: "path"; path: string }
+  | { type: "seek" };
 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
@@ -70,6 +73,13 @@ function reducer(state: State, action: Action): State {
           state.parsedPath && state.latestMessage
             ? simpleGetMessagePathDataItem(state.latestMessage, state.parsedPath)
             : undefined,
+      };
+
+    case "seek":
+      return {
+        ...state,
+        latestMessage: undefined,
+        latestMatchingQueriedData: undefined,
       };
   }
 }
@@ -109,6 +119,10 @@ export function Indicator({ context }: Props): JSX.Element {
     context.onRender = (renderState, done) => {
       setRenderDone(() => done);
 
+      if (renderState.didSeek === true) {
+        dispatch({ type: "seek" });
+      }
+
       const message = last(renderState.currentFrame);
       if (message != undefined) {
         if (message.topic !== state.parsedPath?.topicName) {
@@ -120,6 +134,7 @@ export function Indicator({ context }: Props): JSX.Element {
       }
     };
     context.watch("currentFrame");
+    context.watch("didSeek");
 
     return () => {
       context.onRender = undefined;
