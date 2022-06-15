@@ -8,6 +8,7 @@ import DataSourceInfoHelp from "./DataSourceInfo/index.help.md";
 import dataSourceInfoThumbnail from "./DataSourceInfo/thumbnail.png";
 import ImageViewHelp from "./Image/index.help.md";
 import imageViewThumbnail from "./Image/thumbnail.png";
+import IndicatorHelp from "./Indicator/index.help.md";
 import InternalLogsHelp from "./InternalLogs/index.help.md";
 import LogHelp from "./Log/index.help.md";
 import logThumbnail from "./Log/thumbnail.png";
@@ -81,8 +82,8 @@ const builtin: PanelInfo[] = [
   {
     title: "Indicator",
     type: "Indicator",
-    description: "Display a colored or textual indicator based on a threshold value.",
-    help: undefined, // FIXME
+    description: "Display a colored and/or textual indicator based on a threshold value.",
+    help: IndicatorHelp,
     thumbnail: undefined, // FIXME
     module: async () => await import("./Indicator"),
   },

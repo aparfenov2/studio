@@ -116,7 +116,6 @@ const memoizedCreateRuleNode = memoizeWeak(
           label: "Compare with",
           input: "string",
           value: rule.rawValue,
-          error: undefined, // FIXME
         },
         color: {
           label: "Color",
