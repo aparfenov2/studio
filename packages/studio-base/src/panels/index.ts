@@ -87,6 +87,14 @@ const builtin: PanelInfo[] = [
     module: async () => await import("./Teleop"),
   },
   {
+    title: "Mower",
+    type: "Mower",
+    description: "Teleoperate a robot over a live connection.",
+    help: TeleopHelp,
+    thumbnail: teleopThumbnail,
+    module: async () => await import("./MowerControl"),
+  },
+  {
     title: "Map",
     type: "map",
     description: "Display points on a map.",
