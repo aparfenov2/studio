@@ -83,7 +83,6 @@ export const getBuiltin: (t: TFunction<"panels">) => PanelInfo[] = (t) => [
     title: "Mower",
     type: "Mower",
     description: "Teleoperate a robot over a live connection.",
-    help: TeleopHelp,
     thumbnail: teleopThumbnail,
     module: async () => await import("./MowerControl"),
   },

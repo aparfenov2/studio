@@ -2,20 +2,21 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
-import { DefaultButton } from "@fluentui/react";
+import { Button } from "@mui/material";
 import { set } from "lodash";
 import { useCallback, useEffect, useLayoutEffect, useState } from "react";
 import { DeepPartial } from "ts-essentials";
 
-import { definitions as commonDefs } from "@foxglove/rosmsg-msgs-common";
+import { ros1 as commonDefs } from "@foxglove/rosmsg-msgs-common";
 import { PanelExtensionContext, Topic } from "@foxglove/studio";
 import EmptyState from "@foxglove/studio-base/components/EmptyState";
+
 import {
-    EXPERIMENTAL_PanelExtensionContextWithSettings,
-    SettingsTreeAction,
+    SettingsTreeNodes,
     SettingsTreeNode,
-    SettingsTreeRoots,
-} from "@foxglove/studio-base/components/SettingsTreeEditor/types";
+    SettingsTreeAction,
+  } from "@foxglove/studio";
+
 import Stack from "@foxglove/studio-base/components/Stack";
 import ThemeProvider from "@foxglove/studio-base/theme/ThemeProvider";
 
@@ -41,11 +42,11 @@ type MowerPanelProps = {
 //     },
 // };
 
-type Config = {
+export type Config = {
     topic: undefined | string;
 };
 
-function buildSettingsTree(config: Config, topics: readonly Topic[]): SettingsTreeRoots {
+function buildSettingsTree(config: Config, topics: readonly Topic[]): SettingsTreeNodes {
     const general: SettingsTreeNode = {
         label: "General",
         fields: {
@@ -62,7 +63,7 @@ function buildSettingsTree(config: Config, topics: readonly Topic[]): SettingsTr
 }
 
 
-function MowerPanel(props: MowerPanelProps): JSX.Element {
+export function MowerPanel(props: MowerPanelProps): JSX.Element {
     const { context } = props;
     const { saveState } = context;
 
@@ -111,15 +112,12 @@ function MowerPanel(props: MowerPanelProps): JSX.Element {
     // settings callback
     useEffect(() => {
         const tree = buildSettingsTree(config, topics);
-        // eslint-disable-next-line no-underscore-dangle
-        (
-            context as unknown as EXPERIMENTAL_PanelExtensionContextWithSettings
-        ).__updatePanelSettingsTree({
-            actionHandler: settingsActionHandler,
-            roots: tree,
+        context.updatePanelSettingsEditor({
+          actionHandler: settingsActionHandler,
+          nodes: tree,
         });
         saveState(config);
-    }, [config, context, saveState, settingsActionHandler, topics]);
+      }, [config, context, saveState, settingsActionHandler, topics]);
 
     // advertise topic
     const { topic: currentTopic } = config;
@@ -165,7 +163,7 @@ function MowerPanel(props: MowerPanelProps): JSX.Element {
                 )}
                 {/* {enabled && <DirectionalPad onAction={setCurrentAction} disabled={!enabled} />} */}
 
-                <DefaultButton
+                <Button
                                 onClick={() => {
                                     if (canPublish && hasTopic) {
                                         context.publish?.(currentTopic!, {
@@ -175,12 +173,12 @@ function MowerPanel(props: MowerPanelProps): JSX.Element {
                                 }}
                             >
                     Lets Go!
-                </DefaultButton>
+                </Button>
 
                 {/* <div style={styles.root}>
                     <div style={styles.row}>
                         <div style={styles.cell}>
-                            <DefaultButton
+                            <Button
                                 onClick={() => {
                                     // publish({
                                     //   linear: {
@@ -197,43 +195,43 @@ function MowerPanel(props: MowerPanelProps): JSX.Element {
                                 }}
                             >
                                 Task Navigate To Point
-                            </DefaultButton>
+                            </Button>
                         </div>
                         <div style={styles.cell}>
-                            <DefaultButton
+                            <Button
                                 onClick={() => {
                                 }}
                             >
                                 Publish
-                            </DefaultButton>
+                            </Button>
                         </div>
                     </div>
                     <div style={styles.row}>
                         <div style={styles.cell}>
-                            <DefaultButton
+                            <Button
                                 onClick={() => {
                                 }}
                             >
                                 Task Go Through Polygon
-                            </DefaultButton>
+                            </Button>
                         </div>
                         <div style={styles.cell}>
-                            <DefaultButton
+                            <Button
                                 onClick={() => {
                                 }}
                             >
                                 Publish2
-                            </DefaultButton>
+                            </Button>
                         </div>
                     </div>
                     <div style={styles.row}>
                         <div style={styles.cell} >
-                            <DefaultButton
+                            <Button
                                 onClick={() => {
                                 }}
                             >
                                 Remove All Points
-                            </DefaultButton>
+                            </Button>
                         </div>
                         <div style={styles.cell} ></div>
                     </div>
@@ -243,5 +241,3 @@ function MowerPanel(props: MowerPanelProps): JSX.Element {
         </ThemeProvider>
     );
 }
-
-export default MowerPanel;

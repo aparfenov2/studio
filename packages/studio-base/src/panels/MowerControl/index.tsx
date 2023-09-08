@@ -2,38 +2,47 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
-import { StrictMode } from "react";
+import { StrictMode, useMemo } from "react";
 import ReactDOM from "react-dom";
 
+import { useCrash } from "@foxglove/hooks";
 import { PanelExtensionContext } from "@foxglove/studio";
+import { CaptureErrorBoundary } from "@foxglove/studio-base/components/CaptureErrorBoundary";
 import Panel from "@foxglove/studio-base/components/Panel";
-import PanelExtensionAdapter from "@foxglove/studio-base/components/PanelExtensionAdapter";
+import { PanelExtensionAdapter } from "@foxglove/studio-base/components/PanelExtensionAdapter";
 import { SaveConfig } from "@foxglove/studio-base/types/panels";
 
-import MowerPanel from "./MowerPanel";
-import helpContent from "./index.help.md";
+import { MowerPanel, Config }  from "./MowerPanel";
 
-function initPanel(context: PanelExtensionContext) {
+function initPanel(crash: ReturnType<typeof useCrash>, context: PanelExtensionContext) {
   ReactDOM.render(
     <StrictMode>
-      <MowerPanel context={context} />
+      <CaptureErrorBoundary onError={crash}>
+          <MowerPanel context={context} />
+      </CaptureErrorBoundary>
     </StrictMode>,
     context.panelElement,
   );
+  return () => {
+    ReactDOM.unmountComponentAtNode(context.panelElement);
+  };
 }
 
 type Props = {
-  config: unknown;
-  saveConfig: SaveConfig<unknown>;
+  config: Config;
+  saveConfig: SaveConfig<Config>;
 };
 
 function MowerPanelAdapter(props: Props) {
+  const crash = useCrash();
+  const boundInitPanel = useMemo(() => initPanel.bind(undefined, crash), [crash]);
+
   return (
     <PanelExtensionAdapter
       config={props.config}
       saveConfig={props.saveConfig}
-      help={helpContent}
-      initPanel={initPanel}
+      initPanel={boundInitPanel}
+      highestSupportedConfigVersion={1}
     />
   );
 }
