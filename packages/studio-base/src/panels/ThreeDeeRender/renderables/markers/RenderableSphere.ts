@@ -2,59 +2,64 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
-/* eslint-disable no-underscore-dangle */
-
 import * as THREE from "three";
 
-import type { Renderer } from "../../Renderer";
-import { rgbaEqual } from "../../color";
+import { RenderableMarker } from "./RenderableMarker";
+import { makeStandardMaterial } from "./materials";
+import type { IRenderer } from "../../IRenderer";
+import { rgbToThreeColor } from "../../color";
 import { DetailLevel, sphereSubdivisions } from "../../lod";
 import { Marker } from "../../ros";
-import { RenderableMarker } from "./RenderableMarker";
-import { releaseStandardMaterial, standardMaterial } from "./materials";
 
 export class RenderableSphere extends RenderableMarker {
-  private static _lod: DetailLevel | undefined;
-  private static _geometry: THREE.SphereGeometry | undefined;
+  public mesh: THREE.Mesh<THREE.SphereGeometry, THREE.MeshStandardMaterial>;
 
-  mesh: THREE.Mesh<THREE.SphereGeometry, THREE.Material>;
-
-  constructor(topic: string, marker: Marker, renderer: Renderer) {
-    super(topic, marker, renderer);
+  public constructor(
+    topic: string,
+    marker: Marker,
+    receiveTime: bigint | undefined,
+    renderer: IRenderer,
+  ) {
+    super(topic, marker, receiveTime, renderer);
 
     // Sphere mesh
-    const material = standardMaterial(marker.color, renderer.materialCache);
-    this.mesh = new THREE.Mesh(RenderableSphere.geometry(renderer.maxLod), material);
+    const geometry = renderer.sharedGeometry.getGeometry(
+      `${this.constructor.name}-${renderer.maxLod}`,
+      () => createGeometry(renderer.maxLod),
+    );
+    this.mesh = new THREE.Mesh(geometry, makeStandardMaterial(marker.color));
     this.mesh.castShadow = true;
     this.mesh.receiveShadow = true;
     this.add(this.mesh);
 
-    this.update(marker);
+    this.update(marker, receiveTime);
   }
 
-  override dispose(): void {
-    releaseStandardMaterial(this.userData.marker.color, this._renderer.materialCache);
+  public override dispose(): void {
+    this.mesh.material.dispose();
   }
 
-  override update(marker: Marker): void {
-    const prevMarker = this.userData.marker;
-    super.update(marker);
+  public override update(newMarker: Marker, receiveTime: bigint | undefined): void {
+    super.update(newMarker, receiveTime);
+    const marker = this.userData.marker;
 
-    if (!rgbaEqual(marker.color, prevMarker.color)) {
-      releaseStandardMaterial(prevMarker.color, this._renderer.materialCache);
-      this.mesh.material = standardMaterial(marker.color, this._renderer.materialCache);
+    const transparent = marker.color.a < 1;
+    if (transparent !== this.mesh.material.transparent) {
+      this.mesh.material.transparent = transparent;
+      this.mesh.material.depthWrite = !transparent;
+      this.mesh.material.needsUpdate = true;
     }
+
+    rgbToThreeColor(this.mesh.material.color, marker.color);
+    this.mesh.material.opacity = marker.color.a;
 
     this.scale.set(marker.scale.x, marker.scale.y, marker.scale.z);
   }
+}
 
-  static geometry(lod: DetailLevel): THREE.SphereGeometry {
-    if (!RenderableSphere._geometry || lod !== RenderableSphere._lod) {
-      const subdivisions = sphereSubdivisions(lod);
-      RenderableSphere._geometry = new THREE.SphereGeometry(0.5, subdivisions, subdivisions);
-      RenderableSphere._geometry.computeBoundingSphere();
-      RenderableSphere._lod = lod;
-    }
-    return RenderableSphere._geometry;
-  }
+export function createGeometry(lod: DetailLevel): THREE.SphereGeometry {
+  const subdivisions = sphereSubdivisions(lod);
+  const sphereGeometry = new THREE.SphereGeometry(0.5, subdivisions, subdivisions);
+  sphereGeometry.computeBoundingSphere();
+  return sphereGeometry;
 }

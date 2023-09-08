@@ -2,28 +2,36 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
-import { DeepPartial } from "ts-essentials";
+import type { Time } from "@foxglove/rostime";
+import { FrameTransform, FrameTransforms, NumericType } from "@foxglove/schemas";
 
-import { Time } from "@foxglove/rostime";
-
+import type { PartialMessage } from "./SceneExtension";
 import {
-  CameraInfo,
   ColorRGBA,
-  CompressedImage,
   Header,
-  Image,
-  Marker,
-  Matrix3,
-  Matrix3x4,
   Matrix6,
-  Pose,
-  PoseStamped,
-  PoseWithCovariance,
-  PoseWithCovarianceStamped,
+  PointFieldType,
   Quaternion,
-  RegionOfInterest,
+  TFMessage,
+  Transform,
+  TransformStamped,
   Vector3,
 } from "./ros";
+import type { Pose } from "./transforms";
+
+// Legacy foxglove.Transform type -- see https://github.com/foxglove/schemas/pull/46
+type LegacyTransform = {
+  timestamp: Time;
+  translation: Vector3;
+  rotation: Quaternion;
+};
+// Legacy foxglove.FrameTransform type -- see https://github.com/foxglove/schemas/pull/46
+export type LegacyFrameTransform = {
+  timestamp: Time;
+  parent_frame_id: string;
+  child_frame_id: string;
+  transform: LegacyTransform;
+};
 
 export function normalizeTime(time: Partial<Time> | undefined): Time {
   if (!time) {
@@ -44,13 +52,31 @@ export function normalizeByteArray(byteArray: unknown): Uint8Array {
   }
 }
 
-export function normalizeImageData(data: unknown): Int8Array | Uint8Array {
-  if (data == undefined) {
-    return new Uint8Array(0);
-  } else if (data instanceof Int8Array || data instanceof Uint8Array) {
-    return data;
+export function normalizeInt8Array(int8Array: unknown): Int8Array {
+  if (int8Array == undefined) {
+    return new Int8Array(0);
+  } else if (int8Array instanceof Int8Array) {
+    return int8Array;
+  } else if (Array.isArray(int8Array) || int8Array instanceof ArrayBuffer) {
+    return new Int8Array(int8Array);
   } else {
-    return new Uint8Array(0);
+    return new Int8Array(0);
+  }
+}
+
+export function normalizeFloat32Array(array: unknown): Float32Array {
+  if (array == undefined) {
+    return new Float32Array(0);
+  } else if (array instanceof Float32Array) {
+    return array;
+  } else if (
+    Array.isArray(array) ||
+    array instanceof ArrayBuffer ||
+    array instanceof Float64Array
+  ) {
+    return new Float32Array(array);
+  } else {
+    return new Float32Array(0);
   }
 }
 
@@ -61,7 +87,9 @@ export function normalizeVector3(vector: Partial<Vector3> | undefined): Vector3 
   return { x: vector.x ?? 0, y: vector.y ?? 0, z: vector.z ?? 0 };
 }
 
-export function normalizeVector3s(vectors: Partial<Vector3>[] | undefined): Vector3[] {
+export function normalizeVector3s(
+  vectors: (Partial<Vector3> | undefined)[] | undefined,
+): Vector3[] {
   if (!vectors) {
     return [];
   }
@@ -83,6 +111,7 @@ export function normalizeMatrix6(mat: number[] | undefined): Matrix6 {
   return mat as Matrix6;
 }
 
+// ts-unused-exports:disable-next-line
 export function normalizeQuaternion(quat: Partial<Quaternion> | undefined): Quaternion {
   if (!quat) {
     return { x: 0, y: 0, z: 0, w: 1 };
@@ -98,28 +127,23 @@ export function normalizeColorRGBA(color: Partial<ColorRGBA> | undefined): Color
   return { r: color.r ?? 0, g: color.g ?? 0, b: color.b ?? 0, a: color.a ?? 1 };
 }
 
-export function normalizeColorRGBAs(colors: Partial<ColorRGBA>[] | undefined): ColorRGBA[] {
+export function normalizeColorRGBAs(
+  colors: (Partial<ColorRGBA> | undefined)[] | undefined,
+): ColorRGBA[] {
   if (!colors) {
     return [];
   }
   return colors.map(normalizeColorRGBA);
 }
 
-export function normalizePose(pose: DeepPartial<Pose> | undefined): Pose {
+export function normalizePose(pose: PartialMessage<Pose> | undefined): Pose {
   return {
     position: normalizeVector3(pose?.position),
     orientation: normalizeQuaternion(pose?.orientation),
   };
 }
 
-export function normalizePoseWithCovariance(
-  pose: DeepPartial<PoseWithCovariance> | undefined,
-): PoseWithCovariance {
-  const covariance = normalizeMatrix6(pose?.covariance as number[] | undefined);
-  return { pose: normalizePose(pose?.pose), covariance };
-}
-
-export function normalizeHeader(header: DeepPartial<Header> | undefined): Header {
+export function normalizeHeader(header: PartialMessage<Header> | undefined): Header {
   return {
     frame_id: header?.frame_id ?? "",
     stamp: normalizeTime(header?.stamp),
@@ -127,103 +151,73 @@ export function normalizeHeader(header: DeepPartial<Header> | undefined): Header
   };
 }
 
-export function normalizeMarker(marker: DeepPartial<Marker>): Marker {
+// ts-unused-exports:disable-next-line
+export function normalizeTransform(transform: PartialMessage<Transform> | undefined): Transform {
   return {
-    header: normalizeHeader(marker.header),
-    ns: marker.ns ?? "",
-    id: marker.id ?? 0,
-    type: marker.type ?? 0,
-    action: marker.action ?? 0,
-    pose: normalizePose(marker.pose),
-    scale: normalizeVector3(marker.scale),
-    color: normalizeColorRGBA(marker.color),
-    lifetime: normalizeTime(marker.lifetime),
-    frame_locked: marker.frame_locked ?? false,
-    points: normalizeVector3s(marker.points),
-    colors: normalizeColorRGBAs(marker.colors),
-    text: marker.text ?? "",
-    mesh_resource: marker.mesh_resource ?? "",
-    mesh_use_embedded_materials: marker.mesh_use_embedded_materials ?? false,
+    translation: normalizeVector3(transform?.translation),
+    rotation: normalizeQuaternion(transform?.rotation),
   };
 }
 
-export function normalizePoseStamped(pose: DeepPartial<PoseStamped>): PoseStamped {
+export function normalizeTransformStamped(
+  transform: PartialMessage<TransformStamped> | undefined,
+): TransformStamped {
   return {
-    header: normalizeHeader(pose.header),
-    pose: normalizePose(pose.pose),
+    header: normalizeHeader(transform?.header),
+    child_frame_id: transform?.child_frame_id ?? "",
+    transform: normalizeTransform(transform?.transform),
   };
 }
 
-export function normalizePoseWithCovarianceStamped(
-  message: DeepPartial<PoseWithCovarianceStamped>,
-): PoseWithCovarianceStamped {
+export function normalizeTFMessage(tfMessage: PartialMessage<TFMessage> | undefined): TFMessage {
   return {
-    header: normalizeHeader(message.header),
-    pose: normalizePoseWithCovariance(message.pose),
+    transforms: (tfMessage?.transforms ?? []).map(normalizeTransformStamped),
   };
 }
 
-export function normalizeRegionOfInterest(
-  roi: Partial<RegionOfInterest> | undefined,
-): RegionOfInterest {
-  if (!roi) {
-    return { x_offset: 0, y_offset: 0, height: 0, width: 0, do_rectify: false };
+export function normalizeFrameTransform(
+  frameTransform:
+    | (PartialMessage<FrameTransform> & PartialMessage<LegacyFrameTransform>)
+    | undefined,
+): FrameTransform {
+  return {
+    timestamp: normalizeTime(frameTransform?.timestamp),
+    parent_frame_id: frameTransform?.parent_frame_id ?? "",
+    child_frame_id: frameTransform?.child_frame_id ?? "",
+    translation: normalizeVector3(
+      frameTransform?.translation ?? frameTransform?.transform?.translation,
+    ),
+    rotation: normalizeQuaternion(frameTransform?.rotation ?? frameTransform?.transform?.rotation),
+  };
+}
+
+export function normalizeFrameTransforms(
+  frameTransforms: PartialMessage<FrameTransforms> | undefined,
+): FrameTransforms {
+  return {
+    transforms: (frameTransforms?.transforms ?? []).map(normalizeFrameTransform),
+  };
+}
+
+export function numericTypeToPointFieldType(type: NumericType): PointFieldType {
+  switch (type) {
+    case NumericType.UINT8:
+      return PointFieldType.UINT8;
+    case NumericType.INT8:
+      return PointFieldType.INT8;
+    case NumericType.UINT16:
+      return PointFieldType.UINT16;
+    case NumericType.INT16:
+      return PointFieldType.INT16;
+    case NumericType.UINT32:
+      return PointFieldType.UINT32;
+    case NumericType.INT32:
+      return PointFieldType.INT32;
+    case NumericType.FLOAT32:
+      return PointFieldType.FLOAT32;
+    case NumericType.FLOAT64:
+      return PointFieldType.FLOAT64;
+    default:
+      return PointFieldType.UNKNOWN;
   }
-  return {
-    x_offset: roi.x_offset ?? 0,
-    y_offset: roi.y_offset ?? 0,
-    height: roi.height ?? 0,
-    width: roi.width ?? 0,
-    do_rectify: roi.do_rectify ?? false,
-  };
-}
-
-export function normalizeCameraInfo(
-  message: DeepPartial<CameraInfo> &
-    DeepPartial<{ d: number[]; k: Matrix3; r: Matrix3; p: Matrix3x4 }>,
-): CameraInfo {
-  // Handle lowercase field names as well (ROS2 compatibility)
-  const D = message.D ?? message.d;
-  const K = message.K ?? message.k;
-  const R = message.R ?? message.r;
-  const P = message.P ?? message.p;
-
-  const Dlen = D?.length ?? 0;
-  const Klen = K?.length ?? 0;
-  const Rlen = R?.length ?? 0;
-  const Plen = P?.length ?? 0;
-
-  return {
-    header: normalizeHeader(message.header),
-    height: message.height ?? 0,
-    width: message.width ?? 0,
-    distortion_model: message.distortion_model ?? "",
-    D: Dlen > 0 ? D! : [],
-    K: Klen === 9 ? (K as Matrix3) : [],
-    R: Rlen === 9 ? (R as Matrix3) : [],
-    P: Plen === 12 ? (P as Matrix3x4) : [],
-    binning_x: message.binning_x ?? 0,
-    binning_y: message.binning_y ?? 0,
-    roi: normalizeRegionOfInterest(message.roi),
-  };
-}
-
-export function normalizeImage(message: DeepPartial<Image>): Image {
-  return {
-    header: normalizeHeader(message.header),
-    height: message.height ?? 0,
-    width: message.width ?? 0,
-    encoding: message.encoding ?? "",
-    is_bigendian: message.is_bigendian ?? false,
-    step: message.step ?? 0,
-    data: normalizeImageData(message.data),
-  };
-}
-
-export function normalizeCompressedImage(message: DeepPartial<CompressedImage>): CompressedImage {
-  return {
-    header: normalizeHeader(message.header),
-    format: message.format ?? "",
-    data: normalizeByteArray(message.data),
-  };
 }

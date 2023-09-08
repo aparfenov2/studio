@@ -11,28 +11,42 @@
 //   found at http://www.apache.org/licenses/LICENSE-2.0
 //   You may not use this file except in compliance with the License.
 
-import { Link, styled as muiStyled } from "@mui/material";
+import { Link, Typography } from "@mui/material";
+import { useCallback } from "react";
+import { useLatest } from "react-use";
+import { makeStyles } from "tss-react/mui";
 
+import CopyButton from "@foxglove/studio-base/components/CopyButton";
+import Stack from "@foxglove/studio-base/components/Stack";
 import { MessageEvent } from "@foxglove/studio-base/players/types";
 import { formatTimeRaw } from "@foxglove/studio-base/util/time";
 
-import CopyMessageButton from "./CopyMessageButton";
+import { copyMessageReplacer } from "./copyMessageReplacer";
 import { getMessageDocumentationLink } from "./utils";
 
-const SMetadata = muiStyled("div")`
-  color: ${({ theme }) => theme.palette.text.secondary};
-  margin-top: ${({ theme }) => theme.spacing(0.5)};
-  font-size: 11px;
-  line-height: 1.3;
-`;
+const useStyles = makeStyles()((theme) => ({
+  button: {
+    padding: theme.spacing(0.125),
+
+    ".MuiSvgIcon-root": {
+      fontSize: `${theme.typography.pxToRem(16)} !important`,
+    },
+    ".MuiButton-startIcon": {
+      marginRight: theme.spacing(0.5),
+    },
+    "&:hover": {
+      backgroundColor: "transparent",
+    },
+  },
+}));
 
 type Props = {
   data: unknown;
   diffData: unknown;
   diff: unknown;
   datatype?: string;
-  message: MessageEvent<unknown>;
-  diffMessage?: MessageEvent<unknown>;
+  message: MessageEvent;
+  diffMessage?: MessageEvent;
 };
 
 export default function Metadata({
@@ -43,30 +57,69 @@ export default function Metadata({
   message,
   diffMessage,
 }: Props): JSX.Element {
+  const { classes } = useStyles();
+
+  // Access these by ref so that our callbacks aren't invalidated and CopyButton
+  // memoization is stable.
+  const latestData = useLatest(data);
+  const latestDiffData = useLatest(diffData);
+
+  const docsLink = datatype ? getMessageDocumentationLink(datatype) : undefined;
+  const copyData = useCallback(
+    () => JSON.stringify(latestData.current, copyMessageReplacer, 2) ?? "",
+    [latestData],
+  );
+  const copyDiffData = useCallback(
+    () => JSON.stringify(latestDiffData.current, copyMessageReplacer, 2) ?? "",
+    [latestDiffData],
+  );
+  const copyDiff = useCallback(() => JSON.stringify(diff, copyMessageReplacer, 2) ?? "", [diff]);
+
   return (
-    <SMetadata>
-      {!diffMessage && datatype && (
-        <Link
-          target="_blank"
-          color="inherit"
-          underline="hover"
-          rel="noopener noreferrer"
-          href={getMessageDocumentationLink(datatype)}
-        >
-          {datatype}
-        </Link>
-      )}
-      {diffMessage ? " base" : ""} @ {formatTimeRaw(message.receiveTime)} sec{" "}
-      <CopyMessageButton data={data} text="Copy msg" />
+    <Stack alignItems="flex-start" paddingInline={0.25} paddingBlockStart={0.75}>
+      <Stack direction="row" alignItems="center" gap={0.5}>
+        <Typography variant="caption" lineHeight={1.2} color="text.secondary">
+          {diffMessage ? (
+            "base"
+          ) : docsLink ? (
+            <Link
+              target="_blank"
+              color="inherit"
+              variant="caption"
+              underline="hover"
+              rel="noopener noreferrer"
+              href={docsLink}
+            >
+              {datatype}
+            </Link>
+          ) : (
+            datatype
+          )}
+          {` @ ${formatTimeRaw(message.receiveTime)} sec`}
+        </Typography>
+        <CopyButton size="small" iconSize="inherit" className={classes.button} getText={copyData} />
+      </Stack>
+
       {diffMessage?.receiveTime && (
         <>
-          <div>
-            {`diff @ ${formatTimeRaw(diffMessage.receiveTime)} sec `}
-            <CopyMessageButton data={diffData} text="Copy msg" />
-          </div>
-          <CopyMessageButton data={diff} text="Copy diff of msgs" />
+          <Stack direction="row" alignItems="center" gap={0.5}>
+            <Typography
+              variant="caption"
+              lineHeight={1.2}
+              color="text.secondary"
+            >{`diff @ ${formatTimeRaw(diffMessage.receiveTime)} sec `}</Typography>
+            <CopyButton
+              size="small"
+              iconSize="inherit"
+              className={classes.button}
+              getText={copyDiffData}
+            />
+          </Stack>
+          <CopyButton size="small" iconSize="inherit" className={classes.button} getText={copyDiff}>
+            Copy diff of msgs
+          </CopyButton>
         </>
       )}
-    </SMetadata>
+    </Stack>
   );
 }

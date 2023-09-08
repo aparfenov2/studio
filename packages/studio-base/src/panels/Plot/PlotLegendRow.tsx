@@ -2,268 +2,217 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
-import { useTheme as useFluentUITheme } from "@fluentui/react";
-import {
-  Close as CloseIcon,
-  Error as ErrorIcon,
-  Remove as RemoveIcon,
-  MoreVert as MoreVertIcon,
-} from "@mui/icons-material";
-import { IconButton, Theme, Tooltip, Typography, useTheme } from "@mui/material";
-import { createStyles, makeStyles } from "@mui/styles";
-import { ComponentProps, useCallback, useMemo, useState } from "react";
+import { ErrorCircle16Filled, Square24Filled, Square24Regular } from "@fluentui/react-icons";
+import { Checkbox, Tooltip, Typography } from "@mui/material";
+import { useMemo, useState } from "react";
+import { makeStyles } from "tss-react/mui";
 import { v4 as uuidv4 } from "uuid";
 
-import MessagePathInput from "@foxglove/studio-base/components/MessagePathSyntax/MessagePathInput";
-import TimeBasedChart from "@foxglove/studio-base/components/TimeBasedChart";
-import { useHoverValue } from "@foxglove/studio-base/context/HoverValueContext";
+import { Immutable } from "@foxglove/studio";
+import { iterateTyped } from "@foxglove/studio-base/components/Chart/datasets";
+import { usePanelContext } from "@foxglove/studio-base/components/PanelContext";
+import { useSelectedPanels } from "@foxglove/studio-base/context/CurrentLayoutContext";
+import { useHoverValue } from "@foxglove/studio-base/context/TimelineInteractionStateContext";
+import { useWorkspaceActions } from "@foxglove/studio-base/context/Workspace/useWorkspaceActions";
+import { plotPathDisplayName } from "@foxglove/studio-base/panels/Plot/types";
 import { getLineColor } from "@foxglove/studio-base/util/plotColors";
+import { fonts } from "@foxglove/studio-base/util/sharedStyleConstants";
 
-import PathSettingsModal from "./PathSettingsModal";
-import { PlotPath, isReferenceLinePlotPathType } from "./internalTypes";
-import { plotableRosTypes, PlotConfig, PlotXAxisVal } from "./types";
+import { PlotPath, TypedDataSet, TypedData } from "./internalTypes";
 
-type PlotLegendRowProps = {
+type PlotLegendRowProps = Immutable<{
+  currentTime?: number;
+  datasets: TypedDataSet[];
+  hasMismatchedDataLength: boolean;
   index: number;
-  xAxisVal: PlotXAxisVal;
+  onClickPath: () => void;
   path: PlotPath;
   paths: PlotPath[];
-  hasMismatchedDataLength: boolean;
-  datasets: ComponentProps<typeof TimeBasedChart>["data"]["datasets"];
-  currentTime?: number;
-  saveConfig: (arg0: Partial<PlotConfig>) => void;
+  savePaths: (paths: PlotPath[]) => void;
   showPlotValuesInLegend: boolean;
-};
+}>;
 
-const useStyles = makeStyles((theme: Theme) =>
-  createStyles({
-    root: {
-      display: "contents",
+const ROW_HEIGHT = 28;
 
-      "&:hover, &:focus-within": {
-        "& .MuiIconButton-root": {
-          backgroundColor: theme.palette.action.hover,
-        },
-        "& > *:last-child": {
-          opacity: 1,
-        },
-        "& > *": {
-          backgroundColor: theme.palette.action.hover,
-        },
-      },
-    },
-    listIcon: {
-      padding: theme.spacing(0.25),
-      position: "sticky",
-      left: 0,
-      // creates an opaque background for the sticky element
-      backgroundImage: `linear-gradient(${theme.palette.background.paper}, ${theme.palette.background.paper})`,
-      backgroundBlendMode: "overlay",
-    },
-    legendIconButton: {
-      padding: `${theme.spacing(0.125)} !important`,
-      marginLeft: theme.spacing(0.25),
-    },
-    inputWrapper: {
-      display: "flex",
-      alignItems: "center",
-      padding: theme.spacing(0.25),
-    },
-    plotValue: {
-      display: "flex",
-      alignItems: "center",
-      padding: theme.spacing(0.25),
-    },
-    actionButton: {
-      padding: `${theme.spacing(0.25)} !important`,
-      color: theme.palette.text.secondary,
+const useStyles = makeStyles<void, "plotName">()((theme, _params, classes) => ({
+  root: {
+    display: "contents",
+    cursor: "pointer",
 
-      "&:hover": {
-        color: theme.palette.text.primary,
-      },
-    },
-    actions: {
-      display: "flex",
-      flexDirection: "row",
-      alignItems: "center",
-      padding: theme.spacing(0.25),
-      gap: theme.spacing(0.25),
-      position: "sticky",
-      right: 0,
-      opacity: 0,
-      // creates an opaque background for the sticky element
-      backgroundImage: `linear-gradient(${theme.palette.background.paper}, ${theme.palette.background.paper})`,
-      backgroundBlendMode: "overlay",
-
-      "&:hover": {
+    "&:hover": {
+      "& > *:last-child": {
         opacity: 1,
       },
+      "& > *": {
+        backgroundColor: theme.palette.background.paper,
+        backgroundImage: `linear-gradient(${[
+          "0deg",
+          theme.palette.action.focus,
+          theme.palette.action.focus,
+        ].join(" ,")})`,
+      },
     },
-  }),
-);
+  },
+  showPlotValue: {
+    [`.${classes.plotName}`]: {
+      gridColumn: "span 1",
+      padding: theme.spacing(0, 1.5, 0, 0.5),
+    },
+  },
+  listIcon: {
+    display: "flex",
+    alignItems: "center",
+    position: "sticky",
+    height: ROW_HEIGHT,
+    left: 0,
+  },
+  checkbox: {
+    fontSize: "1em",
+    padding: theme.spacing(0.975),
+    borderRadius: 0,
 
-export default function PlotLegendRow({
+    "svg:not(.MuiSvgIcon-root)": {
+      fontSize: "1em",
+    },
+  },
+  disabledPathLabel: {
+    opacity: 0.5,
+  },
+  plotName: {
+    display: "flex",
+    alignItems: "center",
+    height: ROW_HEIGHT,
+    padding: theme.spacing(0, 2.5, 0, 0.5),
+    gridColumn: "span 2",
+    fontFeatureSettings: `${fonts.SANS_SERIF_FEATURE_SETTINGS}, "zero"`,
+
+    ".MuiTypography-root": {
+      whiteSpace: "nowrap",
+    },
+  },
+  plotValue: {
+    display: "flex",
+    alignItems: "center",
+    height: ROW_HEIGHT,
+    padding: theme.spacing(0.25, 1, 0.25, 0.25),
+  },
+  errorIcon: {
+    color: theme.palette.error.main,
+  },
+}));
+
+export function PlotLegendRow({
+  currentTime,
+  datasets,
+  hasMismatchedDataLength,
   index,
-  xAxisVal,
+  onClickPath,
   path,
   paths,
-  hasMismatchedDataLength,
-  datasets,
-  currentTime,
-  saveConfig,
+  savePaths,
   showPlotValuesInLegend,
 }: PlotLegendRowProps): JSX.Element {
+  const { openPanelSettings } = useWorkspaceActions();
+  const { id: panelId } = usePanelContext();
+  const { setSelectedPanelIds } = useSelectedPanels();
+  const { classes, cx } = useStyles();
+
   const correspondingData = useMemo(() => {
     if (!showPlotValuesInLegend) {
       return [];
     }
-    return datasets.find((set) => set.label === path.value)?.data ?? [];
-  }, [datasets, path.value, showPlotValuesInLegend]);
+    return datasets[index]?.data ?? [];
+  }, [datasets, index, showPlotValuesInLegend]);
 
   const [hoverComponentId] = useState<string>(() => uuidv4());
   const hoverValue = useHoverValue({
     componentId: hoverComponentId,
-    isTimestampScale: true,
+    disableUpdates: !showPlotValuesInLegend,
+    isPlaybackSeconds: true,
   });
 
-  const fluentUITheme = useFluentUITheme();
-  const theme = useTheme();
-
-  const currentDisplay = useMemo(() => {
+  const currentValue = useMemo(() => {
     if (!showPlotValuesInLegend) {
-      return {
-        value: undefined,
-        color: "inherit",
-      };
+      return undefined;
     }
     const timeToCompare = hoverValue?.value ?? currentTime;
 
     let value;
-    for (const pt of correspondingData) {
-      if (timeToCompare == undefined || pt == undefined || pt.x > timeToCompare) {
+    for (const pt of iterateTyped(correspondingData as TypedData[])) {
+      if (timeToCompare == undefined || pt.x > timeToCompare) {
         break;
       }
       value = pt.y;
     }
-    return {
-      value,
-      color: hoverValue?.value != undefined ? fluentUITheme.palette.yellowDark : "inherit",
-    };
-  }, [
-    showPlotValuesInLegend,
-    hoverValue?.value,
-    currentTime,
-    fluentUITheme.palette.yellowDark,
-    correspondingData,
-  ]);
-
-  const legendIconColor = path.enabled
-    ? getLineColor(path.color, index)
-    : theme.palette.text.secondary;
-
-  const classes = useStyles();
-
-  const isReferenceLinePlotPath = isReferenceLinePlotPathType(path);
-
-  const onInputChange = useCallback(
-    (value: string, idx?: number) => {
-      if (idx == undefined) {
-        throw new Error("index not set");
-      }
-      const newPaths = paths.slice();
-      const newPath = newPaths[idx];
-      if (newPath) {
-        newPaths[idx] = { ...newPath, value: value.trim() };
-      }
-      saveConfig({ paths: newPaths });
-    },
-    [paths, saveConfig],
-  );
-
-  const [settingsModalOpen, setSettingsModalOpen] = useState(false);
+    return value;
+  }, [showPlotValuesInLegend, hoverValue?.value, currentTime, correspondingData]);
 
   return (
-    <div className={classes.root}>
-      <div style={{ position: "absolute" }}>
-        {settingsModalOpen && (
-          <PathSettingsModal
-            xAxisVal={xAxisVal}
-            path={path}
-            paths={paths}
-            index={index}
-            saveConfig={saveConfig}
-            onDismiss={() => setSettingsModalOpen(false)}
-          />
-        )}
-      </div>
+    <div
+      className={cx(classes.root, {
+        [classes.showPlotValue]: showPlotValuesInLegend,
+      })}
+      onClick={() => {
+        setSelectedPanelIds([panelId]);
+        openPanelSettings();
+        onClickPath();
+      }}
+    >
       <div className={classes.listIcon}>
-        <IconButton
-          className={classes.legendIconButton}
-          centerRipple={false}
+        <Checkbox
+          className={classes.checkbox}
+          checked={path.enabled}
           size="small"
           title="Toggle visibility"
-          onClick={() => {
+          style={{ color: getLineColor(path.color, index) }}
+          icon={<Square24Regular />}
+          checkedIcon={<Square24Filled />}
+          onClick={(event) => {
+            event.stopPropagation();
+          }} // prevent toggling from opening settings
+          onChange={() => {
             const newPaths = paths.slice();
             const newPath = newPaths[index];
+
             if (newPath) {
               newPaths[index] = { ...newPath, enabled: !newPath.enabled };
             }
-            saveConfig({ paths: newPaths });
+            savePaths(newPaths);
           }}
-        >
-          <RemoveIcon style={{ color: legendIconColor }} color="inherit" />
-        </IconButton>
-      </div>
-      <div className={classes.inputWrapper}>
-        <MessagePathInput
-          supportsMathModifiers
-          path={path.value}
-          onChange={onInputChange}
-          validTypes={plotableRosTypes}
-          placeholder="Enter a topic name or a number"
-          index={index}
-          autoSize
-          disableAutocomplete={isReferenceLinePlotPath}
-          inputStyle={{ textDecoration: !path.enabled ? "line-through" : undefined }}
         />
+      </div>
+      <div
+        className={classes.plotName}
+        style={{ gridColumn: !showPlotValuesInLegend ? "span 2" : undefined }}
+      >
+        <Typography
+          noWrap={showPlotValuesInLegend}
+          flex="auto"
+          variant="body2"
+          className={cx({ [classes.disabledPathLabel]: !path.enabled })}
+        >
+          {plotPathDisplayName(path, index)}
+        </Typography>
         {hasMismatchedDataLength && (
           <Tooltip
             placement="top"
             title="Mismatch in the number of elements in x-axis and y-axis messages"
           >
-            <ErrorIcon fontSize="small" color="error" />
+            <ErrorCircle16Filled className={classes.errorIcon} />
           </Tooltip>
         )}
       </div>
       {showPlotValuesInLegend && (
-        <div className={classes.plotValue} style={{ color: currentDisplay.color }}>
-          <Typography component="div" variant="body2" align="right" color="inherit">
-            {currentDisplay.value ?? ""}
+        <div className={classes.plotValue}>
+          <Typography
+            variant="body2"
+            align="right"
+            color={hoverValue?.value != undefined ? "warning.main" : "text.secondary"}
+          >
+            {currentValue ?? ""}
           </Typography>
         </div>
       )}
-      <div className={classes.actions}>
-        <IconButton
-          className={classes.actionButton}
-          size="small"
-          title="Edit settings"
-          onClick={() => setSettingsModalOpen(true)}
-        >
-          <MoreVertIcon fontSize="small" />
-        </IconButton>
-        <IconButton
-          className={classes.actionButton}
-          size="small"
-          title={`Remove ${path.value}`}
-          onClick={() => {
-            const newPaths = paths.slice();
-            newPaths.splice(index, 1);
-            saveConfig({ paths: newPaths });
-          }}
-        >
-          <CloseIcon fontSize="small" />
-        </IconButton>
-      </div>
     </div>
   );
 }

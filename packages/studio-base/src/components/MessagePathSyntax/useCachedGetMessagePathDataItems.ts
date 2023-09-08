@@ -11,13 +11,13 @@
 //   found at http://www.apache.org/licenses/LICENSE-2.0
 //   You may not use this file except in compliance with the License.
 
-import { isEqual } from "lodash";
-import { useCallback, useMemo, useRef } from "react";
+import { keyBy } from "lodash";
+import { useCallback, useMemo } from "react";
 
-import { useShallowMemo } from "@foxglove/hooks";
+import { filterMap } from "@foxglove/den/collection";
+import { useDeepMemo, useShallowMemo } from "@foxglove/hooks";
+import { Immutable } from "@foxglove/studio";
 import * as PanelAPI from "@foxglove/studio-base/PanelAPI";
-import useChangeDetector from "@foxglove/studio-base/hooks/useChangeDetector";
-import useDeepMemo from "@foxglove/studio-base/hooks/useDeepMemo";
 import useGlobalVariables, {
   GlobalVariables,
 } from "@foxglove/studio-base/hooks/useGlobalVariables";
@@ -26,20 +26,18 @@ import { RosDatatypes } from "@foxglove/studio-base/types/RosDatatypes";
 import {
   enumValuesByDatatypeAndField,
   extractTypeFromStudioEnumAnnotation,
-  getTopicsByTopicName,
-} from "@foxglove/studio-base/util/selectors";
+} from "@foxglove/studio-base/util/enums";
 
-import { MessagePathFilter, MessagePathStructureItem, RosPath } from "./constants";
+import { MessagePathStructureItem, MessagePathStructureItemMessage, RosPath } from "./constants";
+import { filterMatches } from "./filterMatches";
 import { TypicalFilterNames } from "./isTypicalFilterName";
 import { messagePathStructures } from "./messagePathsForDatatype";
 import parseRosPath, { quoteTopicNameIfNeeded } from "./parseRosPath";
 
+type ValueInMapRecord<T> = T extends Map<unknown, infer I> ? I : never;
+
 export type MessagePathDataItem = {
   value: unknown; // The actual value.
-  // TODO(JP): Maybe this should just be a simple path without nice ids, and then have a separate function
-  // to generate "nice ids". Because they might not always be reliable and we might want to use different
-  // kinds of "nice ids" for different purposes, e.g. `[10]{id==5}{other_id=123}` for tooltips (more information)
-  // but `[:]{other_id==123}` for line graphs (more likely to match values).
   path: string; // The path to get to this value. Tries to use "nice ids" like `[:]{some_id==123}` wherever possible.
   constantName?: string; // The name of the constant that the value matches up with, if any.
 };
@@ -48,58 +46,60 @@ export type MessagePathDataItem = {
 // and message to an array of `MessagePathDataItem` objects. The array+objects will be the same by
 // reference, as long as topics/datatypes/global variables haven't changed in the meantime.
 export function useCachedGetMessagePathDataItems(
-  paths: string[],
-): (path: string, message: MessageEvent<unknown>) => MessagePathDataItem[] | undefined {
+  paths: readonly string[],
+): (path: string, message: MessageEvent) => MessagePathDataItem[] | undefined {
   const { topics: providerTopics, datatypes } = PanelAPI.useDataSourceInfo();
   const { globalVariables } = useGlobalVariables();
-  const memoizedPaths: string[] = useShallowMemo<string[]>(paths);
+  const memoizedPaths = useShallowMemo(paths);
+
+  const parsedPaths = useMemo(() => {
+    return filterMap(memoizedPaths, (path) => {
+      const rosPath = parseRosPath(path);
+      return rosPath ? ([path, rosPath] satisfies [string, RosPath]) : undefined;
+    });
+  }, [memoizedPaths]);
 
   // We first fill in global variables in the paths, so we can later see which paths have really
   // changed when the global variables have changed.
-  const unmemoizedFilledInPaths: {
-    [key: string]: RosPath;
-  } = useMemo(() => {
+  const unmemoizedFilledInPaths = useMemo(() => {
     const filledInPaths: Record<string, RosPath> = {};
-    for (const path of memoizedPaths) {
-      const rosPath = parseRosPath(path);
-      if (rosPath) {
-        filledInPaths[path] = fillInGlobalVariablesInPath(rosPath, globalVariables);
-      }
+    for (const [path, parsedPath] of parsedPaths) {
+      filledInPaths[path] = fillInGlobalVariablesInPath(parsedPath, globalVariables);
     }
     return filledInPaths;
-  }, [globalVariables, memoizedPaths]);
-  const memoizedFilledInPaths = useDeepMemo<{
-    [key: string]: RosPath;
-  }>(unmemoizedFilledInPaths);
+  }, [globalVariables, parsedPaths]);
+  const memoizedFilledInPaths = useDeepMemo(unmemoizedFilledInPaths);
+
+  const topicsByName = useMemo(() => keyBy(providerTopics, ({ name }) => name), [providerTopics]);
 
   // Filter down topics and datatypes to only the ones we need to process the requested paths, so
   // our result can be dependent on the relevant topics only. Without this, adding topics/datatypes
   // dynamically would result in panels clearing out when their message reducers change as a result
   // of the change in topics/datatypes identity from the player.
   const unmemoizedRelevantTopics = useMemo(() => {
-    const topicsByName = getTopicsByTopicName(providerTopics);
     const seenNames = new Set<string>();
     const result: Topic[] = [];
-    for (const path of memoizedPaths) {
-      const rosPath = parseRosPath(path);
-      if (rosPath) {
-        if (seenNames.has(rosPath.topicName)) {
-          continue;
-        }
-        seenNames.add(rosPath.topicName);
-        const topic = topicsByName[rosPath.topicName];
-        if (topic) {
-          result.push(topic);
-        }
+    for (const [_, parsedPath] of parsedPaths) {
+      if (seenNames.has(parsedPath.topicName)) {
+        continue;
+      }
+      seenNames.add(parsedPath.topicName);
+      const topic = topicsByName[parsedPath.topicName];
+      if (topic) {
+        result.push(topic);
       }
     }
     return result;
-  }, [providerTopics, memoizedPaths]);
+  }, [topicsByName, parsedPaths]);
   const relevantTopics = useDeepMemo(unmemoizedRelevantTopics);
 
   const unmemoizedRelevantDatatypes = useMemo(() => {
-    const relevantDatatypes: RosDatatypes = new Map();
-    function addRelevantDatatype(datatypeName: string) {
+    const relevantDatatypes = new Map<string, Immutable<ValueInMapRecord<RosDatatypes>>>();
+    function addRelevantDatatype(datatypeName: string, seen: string[]) {
+      if (seen.includes(datatypeName)) {
+        return;
+      }
+
       const type = datatypes.get(datatypeName);
       if (type) {
         relevantDatatypes.set(datatypeName, type);
@@ -108,44 +108,29 @@ export function useCachedGetMessagePathDataItems(
             field.isComplex === true ||
             extractTypeFromStudioEnumAnnotation(field.name) != undefined
           ) {
-            addRelevantDatatype(field.type);
+            addRelevantDatatype(field.type, [...seen, datatypeName]);
           }
         }
       }
     }
-    for (const { datatype } of relevantTopics.values()) {
-      addRelevantDatatype(datatype);
+    for (const { schemaName } of relevantTopics.values()) {
+      if (schemaName != undefined) {
+        addRelevantDatatype(schemaName, []);
+      }
     }
     return relevantDatatypes;
   }, [datatypes, relevantTopics]);
   const relevantDatatypes = useDeepMemo(unmemoizedRelevantDatatypes);
 
-  // Cache MessagePathDataItem arrays by Message. We need to clear out this cache whenever
-  // the topics or datatypes change, since that's what getMessagePathDataItems
-  // depends on, outside of the message+path.
-  const cachesByPath = useRef<{
-    [key: string]: {
-      filledInPath: RosPath;
-      weakMap: WeakMap<MessageEvent<unknown>, MessagePathDataItem[] | undefined>;
-    };
-  }>({});
-  if (useChangeDetector([relevantTopics, relevantDatatypes], { initiallyTrue: true })) {
-    cachesByPath.current = {};
-  }
-  // When the filled in paths changed, then that means that either the path string changed, or a
-  // relevant global variable changed. Delete the caches for where the `filledInPath` doesn't match
-  // any more.
-  if (useChangeDetector([memoizedFilledInPaths], { initiallyTrue: false })) {
-    for (const [path, current] of Object.entries(cachesByPath.current)) {
-      const filledInPath = memoizedFilledInPaths[path];
-      if (!filledInPath || !isEqual(current.filledInPath, filledInPath)) {
-        delete cachesByPath.current[path];
-      }
-    }
-  }
+  const structures = useMemo(() => messagePathStructures(relevantDatatypes), [relevantDatatypes]);
+
+  const enumValues = useMemo(
+    () => enumValuesByDatatypeAndField(relevantDatatypes),
+    [relevantDatatypes],
+  );
 
   return useCallback(
-    (path: string, message: MessageEvent<unknown>): MessagePathDataItem[] | undefined => {
+    (path: string, message: MessageEvent): MessagePathDataItem[] | undefined => {
       if (!memoizedPaths.includes(path)) {
         throw new Error(`path (${path}) was not in the list of cached paths`);
       }
@@ -153,46 +138,17 @@ export function useCachedGetMessagePathDataItems(
       if (!filledInPath) {
         return;
       }
-      const currentPath = (cachesByPath.current[path] = cachesByPath.current[path] ?? {
+      const messagePathDataItems = getMessagePathDataItems(
+        message,
         filledInPath,
-        weakMap: new WeakMap(),
-      });
-      const { weakMap } = currentPath;
-      if (!weakMap.has(message)) {
-        const messagePathDataItems = getMessagePathDataItems(
-          message,
-          filledInPath,
-          relevantTopics,
-          relevantDatatypes,
-        );
-        weakMap.set(message, messagePathDataItems);
-        return messagePathDataItems;
-      }
-      const messagePathDataItems = weakMap.get(message);
+        topicsByName,
+        structures,
+        enumValues,
+      );
       return messagePathDataItems;
     },
-    [relevantDatatypes, memoizedFilledInPaths, memoizedPaths, relevantTopics],
+    [memoizedPaths, memoizedFilledInPaths, topicsByName, structures, enumValues],
   );
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function filterMatches(filter: MessagePathFilter, value: any) {
-  if (typeof filter.value === "object") {
-    throw new Error("filterMatches only works on paths where global variables have been filled in");
-  }
-
-  let currentValue = value;
-  for (const name of filter.path) {
-    currentValue = currentValue[name];
-    if (currentValue == undefined) {
-      return false;
-    }
-  }
-
-  // Test equality using `==` so we can be forgiving for comparing booleans with integers,
-  // comparing numbers with strings, bigints with numbers, and so on.
-  // eslint-disable-next-line @foxglove/strict-equality
-  return currentValue == filter.value;
 }
 
 export function fillInGlobalVariablesInPath(
@@ -232,15 +188,15 @@ export function fillInGlobalVariablesInPath(
 }
 
 // Get a new item that has `queriedData` set to the values and paths as queried by `rosPath`.
-// Exported just for tests.
+// Exported for tests.
 export function getMessagePathDataItems(
-  message: MessageEvent<unknown>,
+  message: MessageEvent,
   filledInPath: RosPath,
-  providerTopics: readonly Topic[],
-  datatypes: RosDatatypes,
+  topicsByName: Record<string, Topic>,
+  structures: Record<string, MessagePathStructureItemMessage>,
+  enumValues: ReturnType<typeof enumValuesByDatatypeAndField>,
 ): MessagePathDataItem[] | undefined {
-  const structures = messagePathStructures(datatypes);
-  const topic = getTopicsByTopicName(providerTopics)[filledInPath.topicName];
+  const topic = topicsByName[filledInPath.topicName];
 
   // We don't care about messages that don't match the topic we're looking for.
   if (!topic || message.topic !== filledInPath.topicName) {
@@ -274,36 +230,25 @@ export function getMessagePathDataItems(
     }
     const pathItem = filledInPath.messagePath[pathIndex];
     const nextPathItem = filledInPath.messagePath[pathIndex + 1];
-    const structureIsJson =
-      structureItem.structureType === "primitive" && structureItem.primitiveType === "json";
     if (!pathItem) {
       // If we're at the end of the `messagePath`, we're done! Just store the point.
       let constantName: string | undefined;
       const prevPathItem = filledInPath.messagePath[pathIndex - 1];
       if (prevPathItem && prevPathItem.type === "name") {
         const fieldName = prevPathItem.name;
-        const enumMap = enumValuesByDatatypeAndField(datatypes)[structureItem.datatype];
+        const enumMap = enumValues[structureItem.datatype];
         constantName = enumMap?.[fieldName]?.[value];
       }
       queriedData.push({ value, path, constantName });
     } else if (pathItem.type === "name" && structureItem.structureType === "message") {
       // If the `pathItem` is a name, we're traversing down using that name.
       const next = structureItem.nextByName[pathItem.name];
-      const nextStructIsJson = next?.structureType === "primitive" && next.primitiveType === "json";
-
-      const actualNext: MessagePathStructureItem =
-        !nextStructIsJson && next
-          ? next
-          : { structureType: "primitive", primitiveType: "json", datatype: "" };
-      traverse(value[pathItem.name], pathIndex + 1, `${path}.${pathItem.repr}`, actualNext);
-    } else if (
-      pathItem.type === "slice" &&
-      (structureItem.structureType === "array" || structureIsJson)
-    ) {
+      traverse(value[pathItem.name], pathIndex + 1, `${path}.${pathItem.repr}`, next);
+    } else if (pathItem.type === "slice" && structureItem.structureType === "array") {
       const { start, end } = pathItem;
       if (typeof start === "object" || typeof end === "object") {
         throw new Error(
-          "getMessagePathDataItems  only works on paths where global variables have been filled in",
+          "getMessagePathDataItems only works on paths where global variables have been filled in",
         );
       }
       const startIdx: number = start;
@@ -346,33 +291,23 @@ export function getMessagePathDataItems(
           // (otherwise they wouldn't have chosen a negative slice).
           newPath = `${path}[${i}]`;
         }
-        traverse(
-          arrayElement,
-          pathIndex + 1,
-          newPath,
-          !structureIsJson && structureItem.structureType === "array"
-            ? structureItem.next
-            : structureItem, // Structure is already JSON.
-        );
+        traverse(arrayElement, pathIndex + 1, newPath, structureItem.next);
       }
     } else if (pathItem.type === "filter") {
       if (filterMatches(pathItem, value)) {
         traverse(value, pathIndex + 1, `${path}{${pathItem.repr}}`, structureItem);
       }
-    } else if (structureIsJson && pathItem.type === "name") {
-      // Use getField just in case.
-      traverse(value[pathItem.name], pathIndex + 1, `${path}.${pathItem.repr}`, {
-        structureType: "primitive",
-        primitiveType: "json",
-        datatype: "",
-      });
     } else {
       console.warn(
         `Unknown pathItem.type ${pathItem.type} for structureType: ${structureItem.structureType}`,
       );
     }
   }
-  const structure = structures[topic.datatype];
+  const structure: MessagePathStructureItemMessage | undefined =
+    // If the topic has no schema, we can at least allow accessing the root message
+    topic.schemaName == undefined
+      ? { structureType: "message", datatype: "", nextByName: {} }
+      : structures[topic.schemaName];
   if (structure) {
     traverse(message.message, 0, quoteTopicNameIfNeeded(filledInPath.topicName), structure);
   }
@@ -380,7 +315,7 @@ export function getMessagePathDataItems(
 }
 
 export type MessageAndData = {
-  messageEvent: MessageEvent<unknown>;
+  messageEvent: MessageEvent;
   queriedData: MessagePathDataItem[];
 };
 
@@ -389,11 +324,9 @@ export type MessageDataItemsByPath = {
 };
 
 export function useDecodeMessagePathsForMessagesByTopic(
-  paths: string[],
-): (messagesByTopic: {
-  [topicName: string]: readonly MessageEvent<unknown>[];
-}) => MessageDataItemsByPath {
-  const memoizedPaths = useShallowMemo<string[]>(paths);
+  paths: readonly string[],
+): (messagesByTopic: { [topicName: string]: readonly MessageEvent[] }) => MessageDataItemsByPath {
+  const memoizedPaths = useShallowMemo(paths);
   const cachedGetMessagePathDataItems = useCachedGetMessagePathDataItems(memoizedPaths);
   // Note: Let callers define their own memoization scheme for messagesByTopic. For regular playback
   // useMemo might be appropriate, but weakMemo will likely better for blocks.

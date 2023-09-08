@@ -147,10 +147,24 @@ describe("Rpc", () => {
     rpc.receive("foo", () => {
       // no-op
     });
-    expect(() =>
+    expect(() => {
       rpc.receive("foo", () => {
         // no-op
-      }),
-    ).toThrow();
+      });
+    }).toThrow();
+  });
+
+  it("rejects when terminated", async () => {
+    const { local, remote } = createLinkedChannels();
+
+    const worker = new Rpc(remote);
+    worker.receive("foo", async () => {
+      return await new Promise(() => {});
+    });
+
+    const rpc = new Rpc(local);
+    const sendPromise = rpc.send("foo", 1);
+    rpc.terminate();
+    await expect(sendPromise).rejects.toThrow("Rpc terminated");
   });
 });

@@ -2,41 +2,77 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
-import { ColorPicker } from "@fluentui/react";
-import { TextField, styled as muiStyled, Popover } from "@mui/material";
-import { useCallback, MouseEvent, useState } from "react";
+import CancelIcon from "@mui/icons-material/Cancel";
+import { TextField, Popover, IconButton } from "@mui/material";
+import { useCallback, MouseEvent, useState, useMemo } from "react";
 import tinycolor from "tinycolor2";
+import { makeStyles } from "tss-react/mui";
 
+import Stack from "@foxglove/studio-base/components/Stack";
 import { fonts } from "@foxglove/studio-base/util/sharedStyleConstants";
 
+import { ColorPickerControl } from "./ColorPickerControl";
 import { ColorSwatch } from "./ColorSwatch";
 
-const StyledTextField = muiStyled(TextField)({
-  ".MuiInputBase-formControl.MuiInputBase-root": {
-    padding: 0,
+const useStyles = makeStyles<void, "iconButton">()((theme, _params, classes) => ({
+  root: {
+    position: "relative",
   },
-  ".MuiInputBase-input": {
-    fontFamily: fonts.MONOSPACE,
-    alignItems: "center",
+  rootDisabled: {
+    pointerEvents: "none",
   },
-});
+  textField: {
+    ".MuiInputBase-formControl.MuiInputBase-root": {
+      padding: 0,
+    },
+    ".MuiInputBase-root": {
+      fontFamily: `${fonts.MONOSPACE}`,
+      cursor: "pointer",
 
-const Root = muiStyled("div")({
-  position: "relative",
-});
+      [`:not(:hover) .${classes.iconButton}`]: {
+        visibility: "hidden",
+      },
+    },
+    ".MuiInputBase-input": {
+      alignItems: "center",
+      fontFeatureSettings: `${fonts.SANS_SERIF_FEATURE_SETTINGS}, "zero"`,
+    },
+  },
+  iconButton: {
+    marginRight: theme.spacing(0.25),
+    opacity: theme.palette.action.disabledOpacity,
+
+    ":hover": {
+      background: "transparent",
+      opacity: 1,
+    },
+  },
+  colorSwatch: {
+    marginLeft: theme.spacing(0.75),
+  },
+}));
 
 type ColorPickerInputProps = {
   alphaType: "none" | "alpha";
+  disabled?: boolean;
   value: undefined | string;
   onChange: (value: undefined | string) => void;
   placeholder?: string;
-  swatchOrientation?: "start" | "end";
+  readOnly?: boolean;
+  hideClearButton?: boolean;
 };
 
 export function ColorPickerInput(props: ColorPickerInputProps): JSX.Element {
-  const { onChange, swatchOrientation = "start", value } = props;
+  const { alphaType, disabled, onChange, readOnly, hideClearButton, value } = props;
+
+  const { classes, cx } = useStyles();
 
   const [anchorElement, setAnchorElement] = useState<undefined | HTMLDivElement>(undefined);
+
+  const parsedValue = useMemo(() => (value ? tinycolor(value) : undefined), [value]);
+  const displayValue =
+    alphaType === "alpha" ? parsedValue?.toHex8String() : parsedValue?.toHexString();
+  const swatchColor = displayValue ?? "#00000044";
 
   const handleClick = useCallback((event: MouseEvent<HTMLDivElement>) => {
     setAnchorElement(event.currentTarget);
@@ -46,26 +82,46 @@ export function ColorPickerInput(props: ColorPickerInputProps): JSX.Element {
     setAnchorElement(undefined);
   }, []);
 
+  const clearValue = useCallback(() => {
+    onChange(undefined);
+  }, [onChange]);
+
   const open = Boolean(anchorElement);
 
-  const isValidColor = value != undefined && tinycolor(value).isValid();
-  const swatchColor = isValidColor ? tinycolor(value).toHex8String() : "#00000044";
-
+  const shouldHideClearButton = (displayValue ?? "") === "" || (hideClearButton ?? false);
   return (
-    <Root>
-      <StyledTextField
+    <Stack
+      className={cx(classes.root, {
+        [classes.rootDisabled]: disabled === true || readOnly === true,
+      })}
+    >
+      <TextField
+        className={classes.textField}
         fullWidth
-        onChange={(event) => onChange(event.target.value)}
+        disabled={disabled}
         placeholder={props.placeholder}
         size="small"
-        value={value ?? ""}
+        value={displayValue ?? ""}
         variant="filled"
         InputProps={{
-          startAdornment: swatchOrientation === "start" && (
-            <ColorSwatch color={swatchColor} onClick={handleClick} />
+          readOnly: true,
+          startAdornment: (
+            <ColorSwatch
+              className={classes.colorSwatch}
+              color={swatchColor}
+              onClick={handleClick}
+              size="small"
+            />
           ),
-          endAdornment: swatchOrientation === "end" && (
-            <ColorSwatch color={swatchColor} onClick={handleClick} />
+          endAdornment: !shouldHideClearButton && (
+            <IconButton
+              size="small"
+              className={classes.iconButton}
+              onClick={clearValue}
+              disabled={disabled}
+            >
+              <CancelIcon />
+            </IconButton>
           ),
         }}
       />
@@ -82,21 +138,13 @@ export function ColorPickerInput(props: ColorPickerInputProps): JSX.Element {
           horizontal: "center",
         }}
       >
-        <ColorPicker
-          color={swatchColor}
-          alphaType={props.alphaType}
-          styles={{
-            root: { minWidth: 216 },
-            tableHexCell: { width: "35%" },
-            input: {
-              input: {
-                fontFeatureSettings: `${fonts.SANS_SERIF_FEATURE_SETTINGS}, 'zero'`,
-              },
-            },
-          }}
-          onChange={(_event, newValue) => onChange(newValue.str)}
+        <ColorPickerControl
+          alphaType={alphaType}
+          value={value}
+          onChange={onChange}
+          onEnterKey={handleClose}
         />
       </Popover>
-    </Root>
+    </Stack>
   );
 }

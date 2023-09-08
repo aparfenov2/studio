@@ -3,88 +3,80 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import { clamp } from "lodash";
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  ReactNode,
-  useMemo,
-  useState,
-  useLayoutEffect,
-} from "react";
-import styled from "styled-components";
+import { useCallback, useEffect, useRef, ReactNode, useState, useLayoutEffect } from "react";
+import { makeStyles } from "tss-react/mui";
 
-import Logger from "@foxglove/log";
+import { scaleValue } from "@foxglove/den/math";
 
-const log = Logger.getLogger(__filename);
+export type HoverOverEvent = {
+  /** Hovered `fraction` value */
+  fraction: number;
+  /** Current hovered X position in client coordinates */
+  clientX: number;
+  /** Current hovered Y position in client coordinates */
+  clientY: number;
+};
 
 type Props = {
-  value: number | undefined;
-  min: number;
-  max: number;
+  fraction: number | undefined;
   disabled?: boolean;
-  step?: number;
   onChange: (value: number) => void;
-  onHoverOver?: (clientX: number, value: number) => void;
+  onHoverOver?: (event: HoverOverEvent) => void;
   onHoverOut?: () => void;
   renderSlider?: (value?: number) => ReactNode;
 };
 
-const StyledSlider = styled.div<{ disabled?: boolean }>`
-  width: 100%;
-  height: 100%;
-  position: relative;
-  cursor: ${({ disabled = false }) => (disabled ? "not-allowed" : "pointer")};
-  border-radius: 2px;
-`;
+const useStyles = makeStyles()((theme) => ({
+  root: {
+    label: "Slider-root",
+    display: "flex",
+    width: "100%",
+    height: "100%",
+    position: "relative",
+    alignItems: "center",
+    cursor: "pointer",
+  },
+  rootDisabled: {
+    label: "Slider-rootDisabled",
+    cursor: "not-allowed",
+    opacity: theme.palette.action.disabledOpacity,
+  },
+  range: {
+    label: "Slider-range",
+    backgroundColor: theme.palette.action.active,
+    position: "absolute",
+    height: "100%",
+  },
+}));
 
-const StyledRange = styled.div.attrs<{ width: number }>(({ width }) => ({
-  style: { width: `${width * 100}%` },
-}))<{ width: number }>`
-  background-color: rgba(255, 255, 255, 0.2);
-  position: absolute;
-  height: 100%;
-  border-radius: 2px;
-`;
-
-function defaultRenderSlider(value: number | undefined): ReactNode {
+function defaultRenderSlider(value: number | undefined, className: string): ReactNode {
   if (value == undefined || isNaN(value)) {
     return ReactNull;
   }
-  return <StyledRange width={value} />;
+  return <div className={className} style={{ width: `${value * 100}%` }} />;
 }
 
 export default function Slider(props: Props): JSX.Element {
   const {
-    value,
-    step = 0,
-    max = 0,
-    min = 0,
+    fraction,
     disabled = false,
     renderSlider = defaultRenderSlider,
     onHoverOver,
     onHoverOut,
     onChange,
   } = props;
+  const { classes, cx } = useStyles();
 
   const elRef = useRef<HTMLDivElement | ReactNull>(ReactNull);
 
-  const getValueAtMouse = useCallback(
-    (ev: React.MouseEvent | MouseEvent): number => {
-      if (!elRef.current) {
-        return 0;
-      }
-      const { left, width } = elRef.current.getBoundingClientRect();
-      const { clientX } = ev;
-      const t = (clientX - left) / width;
-      let interpolated = min + t * (max - min);
-      if (step !== 0) {
-        interpolated = Math.round(interpolated / step) * step;
-      }
-      return clamp(interpolated, min, max);
-    },
-    [max, min, step],
-  );
+  const getValueAtMouse = useCallback((ev: React.MouseEvent | MouseEvent): number => {
+    if (!elRef.current) {
+      return 0;
+    }
+    const { left, right } = elRef.current.getBoundingClientRect();
+    const scaled = scaleValue(ev.clientX, left, right, 0, 1);
+    return clamp(scaled, 0, 1);
+  }, []);
 
   const [mouseDown, setMouseDown] = useState(false);
   const mouseDownRef = useRef(mouseDown);
@@ -109,23 +101,33 @@ export default function Slider(props: Props): JSX.Element {
     }
   }, [onHoverOut]);
 
-  const onMouseUp = useCallback((): void => {
+  const onPointerUp = useCallback((): void => {
     setMouseDown(false);
     if (!mouseInsideRef.current) {
       onHoverOut?.();
     }
   }, [onHoverOut]);
 
-  const onMouseMove = useCallback(
-    (ev: React.MouseEvent | MouseEvent): void => {
-      const val = getValueAtMouse(ev);
+  const onPointerMove = useCallback(
+    (ev: React.PointerEvent | PointerEvent): void => {
+      if (mouseDownRef.current && ev.currentTarget !== window) {
+        // onPointerMove is used on the <div/> for hovering, and on the window for dragging. While
+        // dragging we only want to pay attention to the window events (otherwise we'd be handling
+        // each event twice).
+        return;
+      }
       if (disabled) {
         return;
       }
 
+      const val = getValueAtMouse(ev);
       if (elRef.current) {
-        const { left, right } = elRef.current.getBoundingClientRect();
-        onHoverOver?.(clamp(ev.clientX, left, right), val);
+        const elRect = elRef.current.getBoundingClientRect();
+        onHoverOver?.({
+          fraction: val,
+          clientX: ev.clientX,
+          clientY: elRect.y + elRect.height / 2,
+        });
       }
       if (!mouseDownRef.current) {
         return;
@@ -135,8 +137,8 @@ export default function Slider(props: Props): JSX.Element {
     [disabled, getValueAtMouse, onChange, onHoverOver],
   );
 
-  const onMouseDown = useCallback(
-    (ev: React.MouseEvent<HTMLDivElement>): void => {
+  const onPointerDown = useCallback(
+    (ev: React.PointerEvent<HTMLDivElement>): void => {
       if (disabled) {
         return;
       }
@@ -151,38 +153,29 @@ export default function Slider(props: Props): JSX.Element {
   );
 
   useEffect(() => {
-    if (max < min) {
-      const msg = `Slider component given invalid range: ${min}, ${max}`;
-      log.error(new Error(msg));
-    }
-  }, [min, max]);
-
-  const sliderValue = useMemo(() => {
-    return value != undefined && max > min ? (value - min) / (max - min) : undefined;
-  }, [max, min, value]);
-
-  useEffect(() => {
     if (mouseDown) {
-      window.addEventListener("mouseup", onMouseUp);
-      window.addEventListener("mousemove", onMouseMove);
+      window.addEventListener("pointerup", onPointerUp);
+      window.addEventListener("pointermove", onPointerMove);
       return () => {
-        window.removeEventListener("mouseup", onMouseUp);
-        window.removeEventListener("mousemove", onMouseMove);
+        window.removeEventListener("pointerup", onPointerUp);
+        window.removeEventListener("pointermove", onPointerMove);
       };
     }
     return undefined;
-  }, [mouseDown, onMouseMove, onMouseUp]);
+  }, [mouseDown, onPointerMove, onPointerUp]);
 
   return (
-    <StyledSlider
-      disabled={disabled}
+    <div
       ref={elRef}
-      onMouseDown={onMouseDown}
-      onMouseMove={onMouseMove}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
+      className={cx(classes.root, {
+        [classes.rootDisabled]: disabled,
+      })}
     >
-      {renderSlider(sliderValue)}
-    </StyledSlider>
+      {renderSlider(fraction, classes.range)}
+    </div>
   );
 }

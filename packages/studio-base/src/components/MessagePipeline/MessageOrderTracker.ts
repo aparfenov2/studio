@@ -14,7 +14,7 @@
 import Logger from "@foxglove/log";
 import { Time, isLessThan, subtract as subtractTimes, toSec } from "@foxglove/rostime";
 import { PlayerState, MessageEvent, PlayerProblem } from "@foxglove/studio-base/players/types";
-import { formatFrame, getTimestampForMessageEvent } from "@foxglove/studio-base/util/time";
+import { formatFrame } from "@foxglove/studio-base/util/time";
 
 const DRIFT_THRESHOLD_SEC = 1; // Maximum amount of drift allowed.
 const WAIT_FOR_SEEK_SEC = 1; // How long we wait for a change in `lastSeekTime` before warning.
@@ -28,91 +28,75 @@ const log = Logger.getLogger(__filename);
 // This is to ensure that other mechanisms that we have in place for either discarding old messages
 // or forcing an update of `player.lastSeekTime` are working properly.
 class MessageOrderTracker {
-  private lastMessages: readonly MessageEvent<unknown>[] = [];
-  private lastCurrentTime?: Time;
-  private lastMessageTime?: Time;
-  private lastMessageTopic?: string;
-  private lastLastSeekTime?: number;
-  private warningTimeout?: ReturnType<typeof setTimeout>;
+  #lastMessages: readonly MessageEvent[] = [];
+  #lastCurrentTime?: Time;
+  #lastMessageTime?: Time;
+  #lastMessageTopic?: string;
+  #lastLastSeekTime?: number;
+  #warningTimeout?: ReturnType<typeof setTimeout>;
 
   /**
    * Set this to `true` to debug out-of-order messages. It is disabled by default in production
    * because logging messages to the console prevents them from getting garbage-collected as long as
    * the console is not cleared.
    */
-  private trackIncorrectMessages = false;
+  #trackIncorrectMessages = false;
 
-  private incorrectMessages: MessageEvent<unknown>[] = [];
+  #incorrectMessages: MessageEvent[] = [];
 
-  update(playerState: PlayerState): PlayerProblem[] {
+  public update(playerState: PlayerState): PlayerProblem[] {
     if (!playerState.activeData) {
       return [];
     }
 
     const problems: PlayerProblem[] = [];
 
-    const { messages, messageOrder, currentTime, lastSeekTime } = playerState.activeData;
+    const { messages, currentTime, lastSeekTime } = playerState.activeData;
     let didSeek = false;
 
-    if (this.lastLastSeekTime !== lastSeekTime) {
-      this.lastLastSeekTime = lastSeekTime;
-      if (this.warningTimeout) {
-        clearTimeout(this.warningTimeout);
-        this.warningTimeout = undefined;
-        this.incorrectMessages = [];
+    if (this.#lastLastSeekTime !== lastSeekTime) {
+      this.#lastLastSeekTime = lastSeekTime;
+      if (this.#warningTimeout) {
+        clearTimeout(this.#warningTimeout);
+        this.#warningTimeout = undefined;
+        this.#incorrectMessages = [];
       }
-      this.warningTimeout = this.lastMessageTime = this.lastCurrentTime = undefined;
-      this.lastMessages = [];
+      this.#warningTimeout = this.#lastMessageTime = this.#lastCurrentTime = undefined;
+      this.#lastMessages = [];
       didSeek = true;
     }
-    if (this.lastMessages !== messages || this.lastCurrentTime !== currentTime) {
-      this.lastMessages = messages;
-      this.lastCurrentTime = currentTime;
+    if (this.#lastMessages !== messages || this.#lastCurrentTime !== currentTime) {
+      this.#lastMessages = messages;
+      this.#lastCurrentTime = currentTime;
       for (const message of messages) {
-        const messageTime = getTimestampForMessageEvent(message, messageOrder);
-        if (!messageTime) {
-          const formattedTime = formatFrame(currentTime);
-          const msg =
-            `Received a message on topic ${message.topic} around ${formattedTime} with ` +
-            `no ${messageOrder}.`;
-          problems.push({
-            severity: "warn",
-            error: new Error(msg),
-            message: "Unsortable message",
-          });
-
-          this.lastMessageTopic = message.topic;
-          this.lastMessageTime = undefined;
-          continue;
-        }
+        const messageTime = message.receiveTime;
 
         // The first emit after a seek occurs from a backfill. This backfill might produce messages
         // much older than the seek time.
         if (!didSeek) {
           const currentTimeDrift = Math.abs(toSec(subtractTimes(messageTime, currentTime)));
           if (currentTimeDrift > DRIFT_THRESHOLD_SEC) {
-            if (this.trackIncorrectMessages) {
-              this.incorrectMessages.push(message);
+            if (this.#trackIncorrectMessages) {
+              this.#incorrectMessages.push(message);
             }
-            if (!this.warningTimeout) {
-              this.warningTimeout = setTimeout(() => {
+            if (!this.#warningTimeout) {
+              this.#warningTimeout = setTimeout(() => {
                 // timeout has fired, we need to clear so a new timeout registers if there are more messages
-                this.warningTimeout = undefined;
+                this.#warningTimeout = undefined;
                 // reset incorrect message queue before posting warning so we never keep
                 // incorrectMessages around. The browser console will keep messages in memory when
                 // logged, so disable logging of messages unless explicitly enabled.
                 const info = {
                   currentTime,
                   lastSeekTime,
-                  messageOrder,
                   messageTime,
-                  incorrectMessages: this.trackIncorrectMessages
-                    ? this.incorrectMessages
+                  incorrectMessages: this.#trackIncorrectMessages
+                    ? this.#incorrectMessages
                     : "not being tracked",
                 };
-                this.incorrectMessages = [];
+                this.#incorrectMessages = [];
                 log.warn(
-                  `${messageOrder} very different from player.currentTime; without updating lastSeekTime`,
+                  `Message receiveTime very different from player.currentTime; without updating lastSeekTime`,
                   info,
                 );
               }, WAIT_FOR_SEEK_SEC * 1000);
@@ -121,15 +105,15 @@ class MessageOrderTracker {
         }
 
         if (
-          this.lastMessageTime &&
-          this.lastMessageTopic != undefined &&
-          isLessThan(messageTime, this.lastMessageTime)
+          this.#lastMessageTime &&
+          this.#lastMessageTopic != undefined &&
+          isLessThan(messageTime, this.#lastMessageTime)
         ) {
           const formattedTime = formatFrame(messageTime);
-          const lastMessageTime = formatFrame(this.lastMessageTime);
+          const lastMessageTime = formatFrame(this.#lastMessageTime);
           const errorMessage =
             `Processed a message on ${message.topic} at ${formattedTime} which is earlier than ` +
-            `last processed message on ${this.lastMessageTopic} at ${lastMessageTime}.`;
+            `last processed message on ${this.#lastMessageTopic} at ${lastMessageTime}.`;
 
           problems.push({
             severity: "warn",
@@ -137,8 +121,8 @@ class MessageOrderTracker {
             error: new Error(errorMessage),
           });
         }
-        this.lastMessageTopic = message.topic;
-        this.lastMessageTime = messageTime;
+        this.#lastMessageTopic = message.topic;
+        this.#lastMessageTime = messageTime;
       }
     }
 

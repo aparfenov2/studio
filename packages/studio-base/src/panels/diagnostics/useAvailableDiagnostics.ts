@@ -2,6 +2,8 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
+import { useMemo } from "react";
+
 import { useMessageReducer } from "@foxglove/studio-base/PanelAPI";
 import { MessageEvent } from "@foxglove/studio-base/players/types";
 import { mightActuallyBePartial } from "@foxglove/studio-base/util/mightActuallyBePartial";
@@ -11,10 +13,9 @@ import { DiagnosticStatusArrayMsg } from "./util";
 type DiagnosticNameSet = Set<string>;
 type UseAvailableDiagnosticResult = Map<string, DiagnosticNameSet>;
 
-// Exported for tests
-export function addMessages(
+function addMessages(
   previousAvailableDiagnostics: UseAvailableDiagnosticResult,
-  messages: readonly MessageEvent<unknown>[],
+  messages: readonly MessageEvent[],
 ): UseAvailableDiagnosticResult {
   // If we detect new hardware ids or names we need to create a new instance of available diagnostics
   // so downstream consumers know it changed by observing the object reference changing
@@ -46,9 +47,16 @@ export function addMessages(
 
 const EmptyMap = () => new Map();
 
-export default function useAvailableDiagnostics(topic: string): UseAvailableDiagnosticResult {
+export default function useAvailableDiagnostics(topic?: string): UseAvailableDiagnosticResult {
+  const topics = useMemo(() => {
+    if (topic) {
+      return [topic];
+    }
+    return [];
+  }, [topic]);
+
   return useMessageReducer<UseAvailableDiagnosticResult>({
-    topics: [topic],
+    topics,
     restore: EmptyMap,
     addMessages,
   });

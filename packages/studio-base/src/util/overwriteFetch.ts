@@ -15,8 +15,9 @@
 // in our logs and want the logs to more fully reflect the error message.
 export default function overwriteFetch(): void {
   const originalFetch = global.fetch;
-  global.fetch = async (url: RequestInfo, init?: RequestInit) => {
+  global.fetch = async (url: RequestInfo | URL, init?: RequestInit) => {
     // Use this replacement error instead of the original one, because this one will have the correct stack trace.
+    // eslint-disable-next-line @typescript-eslint/no-base-to-string
     const replacementError = new TypeError(`Failed to fetch: ${url}`);
     return await originalFetch(url, init).catch((error) => {
       if (error.message === "Failed to fetch") {

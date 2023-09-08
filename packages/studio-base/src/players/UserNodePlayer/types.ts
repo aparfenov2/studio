@@ -70,9 +70,9 @@ export const ErrorCodes = {
 };
 
 export type Diagnostic = {
-  severity: typeof DiagnosticSeverity[keyof typeof DiagnosticSeverity];
+  severity: (typeof DiagnosticSeverity)[keyof typeof DiagnosticSeverity];
   message: string;
-  source: typeof Sources[keyof typeof Sources];
+  source: (typeof Sources)[keyof typeof Sources];
   startLineNumber?: number;
   startColumn?: number;
   endLineNumber?: number;
@@ -103,10 +103,14 @@ export type NodeRegistration = {
   nodeData: NodeData;
   inputs: readonly string[];
   output: Topic;
-  processMessage: (
-    messageEvent: MessageEvent<unknown>,
+  processBlockMessage: (
+    messageEvent: MessageEvent,
     globalVariables: GlobalVariables,
-  ) => Promise<MessageEvent<unknown> | undefined>;
+  ) => Promise<MessageEvent | undefined>;
+  processMessage: (
+    messageEvent: MessageEvent,
+    globalVariables: GlobalVariables,
+  ) => Promise<MessageEvent | undefined>;
   terminate: () => void;
 };
 
@@ -114,7 +118,7 @@ export type NodeDataTransformer = (nodeData: NodeData, topics: Topic[]) => NodeD
 
 export type UserNodeLog = {
   source: "registerNode" | "processMessage";
-  value: unknown; // TODO: This should ideally share the type def of `log()` in `lib.js`
+  value: unknown;
 };
 
 export type RegistrationOutput = {

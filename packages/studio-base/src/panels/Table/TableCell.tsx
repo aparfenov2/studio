@@ -11,22 +11,33 @@
 //   found at http://www.apache.org/licenses/LICENSE-2.0
 //   You may not use this file except in compliance with the License.
 
-import MinusIcon from "@mdi/svg/svg/minus-box-outline.svg";
+import MinusIcon from "@mui/icons-material/IndeterminateCheckBoxOutlined";
+import { IconButton } from "@mui/material";
+import { Row } from "@tanstack/react-table";
 import { PropsWithChildren } from "react";
-import { Row } from "react-table";
-import styled from "styled-components";
+import { makeStyles } from "tss-react/mui";
 
-import Icon from "@foxglove/studio-base/components/Icon";
+import { CellValue } from "@foxglove/studio-base/panels/Table/types";
 
 import { sanitizeAccessorPath } from "./sanitizeAccessorPath";
 
-const ObjectCell = styled.span`
-  font-style: italic;
-  cursor: pointer;
-`;
+const useStyles = makeStyles()((theme) => ({
+  objectCell: {
+    fontStyle: "italic",
+    cursor: "pointer",
+  },
+  iconButton: {
+    marginTop: theme.spacing(-0.5),
+    marginLeft: theme.spacing(-0.5),
+
+    "&:hover": {
+      backgroundColor: "transparent",
+    },
+  },
+}));
 
 type TableCellProps = {
-  row: Row;
+  row: Row<CellValue>;
   accessorPath: string;
 };
 
@@ -35,19 +46,19 @@ export default function TableCell({
   accessorPath,
   children,
 }: PropsWithChildren<TableCellProps>): JSX.Element {
+  const { classes } = useStyles();
   const [isExpanded, setIsExpanded] = React.useState(false);
-  const toggleIsExpanded = React.useCallback(() => setIsExpanded((expanded) => !expanded), []);
+  const toggleIsExpanded = React.useCallback(() => {
+    setIsExpanded((expanded) => !expanded);
+  }, []);
 
-  if (row.isExpanded || isExpanded) {
+  if (row.getIsExpanded() || isExpanded) {
     return (
-      <div style={{ position: "relative" }}>
+      <div>
         {isExpanded && (
-          <Icon
-            style={{ position: "absolute", top: "2px", right: "2px" }}
-            onClick={toggleIsExpanded}
-          >
-            <MinusIcon />
-          </Icon>
+          <IconButton size="small" onClick={toggleIsExpanded} className={classes.iconButton}>
+            <MinusIcon fontSize="small" />
+          </IconButton>
         )}
         {children}
       </div>
@@ -55,11 +66,12 @@ export default function TableCell({
   }
 
   return (
-    <ObjectCell
-      data-test={`expand-cell-${sanitizeAccessorPath(accessorPath)}-${row.index}`}
+    <span
+      className={classes.objectCell}
+      data-testid={`expand-cell-${sanitizeAccessorPath(accessorPath)}-${row.index}`}
       onClick={toggleIsExpanded}
     >
       Object
-    </ObjectCell>
+    </span>
   );
 }

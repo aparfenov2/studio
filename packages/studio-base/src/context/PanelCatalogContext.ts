@@ -5,6 +5,7 @@
 import { ComponentType, createContext, useContext } from "react";
 
 import { PanelStatics } from "@foxglove/studio-base/components/Panel";
+import { ExtensionNamespace } from "@foxglove/studio-base/types/Extensions";
 import { PanelConfig } from "@foxglove/studio-base/types/panels";
 
 export type PanelComponent = ComponentType<{ childId?: string; tabId?: string }> &
@@ -17,6 +18,9 @@ export type PanelInfo = {
   thumbnail?: string;
   help?: React.ReactNode;
 
+  /** Set this to true if a panel has custom toolbar items and so cannot be renamed. */
+  hasCustomToolbar?: boolean;
+
   /**
    * The panel module is a function to load the panel.
    * This is to support our lazy built-in panels
@@ -25,6 +29,7 @@ export type PanelInfo = {
   config?: PanelConfig;
   relatedConfigs?: { [panelId: string]: PanelConfig };
   preconfigured?: boolean;
+  extensionNamespace?: ExtensionNamespace;
 };
 
 /** PanelCatalog describes the interface for getting available panels */

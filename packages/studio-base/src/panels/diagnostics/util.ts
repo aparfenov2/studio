@@ -23,7 +23,6 @@ import fuzzyFilter from "@foxglove/studio-base/util/fuzzyFilter";
 // necessary. Exported for tests.
 export const MAX_STRING_LENGTH = 5000; // 5KB
 
-// ts-prune-ignore-next
 export const LEVELS: { OK: 0; WARN: 1; ERROR: 2; STALE: 3 } = {
   OK: 0,
   WARN: 1,
@@ -43,6 +42,22 @@ export const KNOWN_LEVELS = [0, 1, 2, 3];
 interface ToString {
   toString(): string;
 }
+
+export type DiagnosticStatusConfig = {
+  selectedHardwareId?: string;
+  selectedName?: string;
+  splitFraction?: number;
+  topicToRender: string;
+  numericPrecision?: number;
+};
+
+export type DiagnosticSummaryConfig = {
+  minLevel: number;
+  pinnedIds: DiagnosticId[];
+  topicToRender: string;
+  hardwareIdFilter: string;
+  sortByLevel?: boolean;
+};
 
 export type DiagnosticId = string & ToString;
 

@@ -11,29 +11,31 @@
 //   found at http://www.apache.org/licenses/LICENSE-2.0
 //   You may not use this file except in compliance with the License.
 
-import { useTheme } from "@fluentui/react";
-import ChartLineVariantIcon from "@mdi/svg/svg/chart-line-variant.svg";
-import DotsHorizontalIcon from "@mdi/svg/svg/dots-horizontal.svg";
-import ChevronDownIcon from "@mdi/svg/svg/unfold-less-horizontal.svg";
-import ChevronUpIcon from "@mdi/svg/svg/unfold-more-horizontal.svg";
-import { Theme } from "@mui/material";
-import { makeStyles } from "@mui/styles";
-import cx from "classnames";
+import PowerInputIcon from "@mui/icons-material/PowerInput";
+import ShowChartIcon from "@mui/icons-material/ShowChart";
+import {
+  Tooltip,
+  Table,
+  TableBody,
+  TableCell,
+  TableRow,
+  IconButton,
+  Typography,
+  tableRowClasses,
+  iconButtonClasses,
+} from "@mui/material";
 import { clamp } from "lodash";
 import { ReactElement, useCallback, useEffect, useRef, useState } from "react";
 import { createSelector } from "reselect";
 import sanitizeHtml from "sanitize-html";
+import { makeStyles } from "tss-react/mui";
 
-import Icon from "@foxglove/studio-base/components/Icon";
 import Stack from "@foxglove/studio-base/components/Stack";
-import Tooltip from "@foxglove/studio-base/components/Tooltip";
 import { openSiblingPlotPanel } from "@foxglove/studio-base/panels/Plot";
 import { openSiblingStateTransitionsPanel } from "@foxglove/studio-base/panels/StateTransitions";
-import { Config } from "@foxglove/studio-base/panels/diagnostics/DiagnosticStatusPanel";
 import { OpenSiblingPanel } from "@foxglove/studio-base/types/panels";
-import { colors } from "@foxglove/studio-base/util/sharedStyleConstants";
 
-import { LEVEL_NAMES, DiagnosticInfo, KeyValue, DiagnosticStatusMessage } from "./util";
+import { DiagnosticInfo, KeyValue, DiagnosticStatusMessage, LEVELS } from "./util";
 
 const MIN_SPLIT_FRACTION = 0.1;
 
@@ -42,9 +44,8 @@ type Props = {
   splitFraction: number | undefined;
   onChangeSplitFraction: (arg0: number) => void;
   topicToRender: string;
+  numericPrecision: number | undefined;
   openSiblingPanel: OpenSiblingPanel;
-  collapsedSections: { name: string; section: string }[];
-  saveConfig: (arg0: Partial<Config>) => void;
 };
 
 type FormattedKeyValue = {
@@ -69,86 +70,21 @@ const allowedTags = [
   "tr",
   "tt",
   "u",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "H1",
+  "H2",
+  "H3",
+  "H4",
+  "H5",
+  "H6",
 ];
 
-function sanitize(value: string): { __html: string } {
-  return {
-    __html: sanitizeHtml(value, {
-      allowedTags,
-      allowedAttributes: {
-        font: ["color", "size"],
-        td: ["colspan"],
-        th: ["colspan"],
-      },
-    }),
-  };
-}
-
-const useStyles = makeStyles((theme: Theme) => ({
-  table: {
-    tableLayout: "fixed",
-    width: "100%",
-    lineHeight: "1.3em",
-    whiteSpace: "pre-line",
-    overflowWrap: "break-word",
-    textAlign: "left",
-    border: "none",
-
-    "& td": {
-      lineHeight: "1.3em",
-      border: "none",
-      padding: "1px 3px",
-    },
-    "& th": {
-      lineHeight: "1.3em",
-      padding: "1px 3px",
-    },
-  },
-  name: {
-    fontWeight: "bold",
-  },
-  sectionHeader: {
-    color: colors.HIGHLIGHT,
-    textAlign: "center",
-    fontSize: "1.2em",
-    padding: 4,
-    cursor: "pointer",
-    border: "none",
-  },
-  // // Status classes
-  ok: { color: `${theme.palette.success.main} !important` },
-  warn: { color: `${theme.palette.warning.main} !important` },
-  error: { color: `${theme.palette.error.main} !important` },
-  stale: { color: `${theme.palette.info.main} !important` },
-  unknown: { color: `${theme.palette.error.main} !important` },
-
-  collapsedSection: {
-    textAlign: "center",
-    color: theme.palette.error.main,
-  },
-  interactiveRow: {
-    cursor: "pointer",
-
-    "&:nth-child(odd)": {
-      backgroundColor: theme.palette.action.hover,
-    },
-    "&:hover": {
-      backgroundColor: theme.palette.action.focus,
-
-      "& .icon": {
-        visibility: "visible",
-      },
-    },
-  },
-  icon: {
-    color: theme.palette.primary.main,
-    marginLeft: 4,
-    visibility: "hidden",
-
-    "& > svg": {
-      verticalAlign: -2,
-    },
-  },
+const useStyles = makeStyles()((theme) => ({
   resizeHandle: {
     position: "absolute",
     top: 0,
@@ -168,11 +104,48 @@ const useStyles = makeStyles((theme: Theme) => ({
         left: 6,
         marginLeft: -2,
         width: 4,
-        backgroundColor: "rgba(127, 127, 127, 0.4)",
+        backgroundColor: theme.palette.action.focus,
       },
     },
   },
+  table: {
+    "@media (pointer: fine)": {
+      [`.${tableRowClasses.root} .${iconButtonClasses.root}`]: { visibility: "hidden" },
+      [`.${tableRowClasses.root}:hover .${iconButtonClasses.root}`]: { visibility: "visible" },
+    },
+  },
+  tableHeaderRow: {
+    backgroundColor: theme.palette.background.paper,
+  },
+  htmlTableCell: {
+    "h1, h2, h3, h4, h5, h6": {
+      fontFamily: theme.typography.subtitle2.fontFamily,
+      fontSize: theme.typography.subtitle2.fontSize,
+      lineHeight: theme.typography.subtitle2.lineHeight,
+      letterSpacing: theme.typography.subtitle2.letterSpacing,
+      fontWeight: 800,
+      margin: 0,
+    },
+  },
+  iconButton: {
+    "&:hover, &:active, &:focus": {
+      backgroundColor: "transparent",
+    },
+  },
 }));
+
+function sanitize(value: string): { __html: string } {
+  return {
+    __html: sanitizeHtml(value, {
+      allowedTags,
+      allowedAttributes: {
+        font: ["color", "size"],
+        td: ["colspan"],
+        th: ["colspan"],
+      },
+    }),
+  };
+}
 
 // preliminary check to avoid expensive operations when there is no html
 const HAS_ANY_HTML = new RegExp(`<(${allowedTags.join("|")})`);
@@ -194,43 +167,23 @@ const getFormattedKeyValues = createSelector(
 // component to display a single diagnostic status
 export default function DiagnosticStatus(props: Props): JSX.Element {
   const {
-    saveConfig,
-    collapsedSections,
     onChangeSplitFraction,
     info,
     topicToRender,
+    numericPrecision,
     openSiblingPanel,
     splitFraction = 0.5,
   } = props;
+  const { classes } = useStyles();
   const tableRef = useRef<HTMLTableElement>(ReactNull);
-  const classes = useStyles();
-  const theme = useTheme();
 
-  const onClickSection = useCallback(
-    (sectionObj: { name: string; section: string }): void => {
-      const clickedSelectionIsCollapsed = collapsedSections.find(
-        ({ name, section }) => name === sectionObj.name && section === sectionObj.section,
-      );
-      if (clickedSelectionIsCollapsed) {
-        saveConfig({
-          collapsedSections: collapsedSections.filter(
-            ({ name, section }) => name !== sectionObj.name || section !== sectionObj.section,
-          ),
-        });
-      } else {
-        saveConfig({ collapsedSections: [...collapsedSections, sectionObj] });
-      }
-    },
-    [collapsedSections, saveConfig],
-  );
-
-  const resizeMouseDown = useCallback((event: React.MouseEvent<Element>) => {
+  const resizeMouseDown = useCallback((event: React.MouseEvent) => {
     setResizing(true);
     event.preventDefault();
   }, []);
-
-  const resizeMouseUp = useCallback(() => setResizing(false), []);
-
+  const resizeMouseUp = useCallback(() => {
+    setResizing(false);
+  }, []);
   const resizeMouseMove = useCallback(
     (event: MouseEvent) => {
       if (!tableRef.current) {
@@ -269,220 +222,183 @@ export default function DiagnosticStatus(props: Props): JSX.Element {
       openPlotPanelIconElem?: React.ReactNode,
     ): ReactElement => {
       if (html) {
-        return <td dangerouslySetInnerHTML={html} />;
+        return <TableCell className={classes.htmlTableCell} dangerouslySetInnerHTML={html} />;
       }
+
+      // Apply numeric precision to the value if requested and it can be parsed
+      // as a float
+      let strToRender = str;
+      if (numericPrecision != undefined && isFloatOrInteger(str)) {
+        strToRender = parseFloat(str).toFixed(numericPrecision);
+      }
+
       return (
-        <td>
-          {str ? str : "\xa0"}
-          {openPlotPanelIconElem}
-        </td>
+        <>
+          <TableCell padding="checkbox">
+            <Stack
+              direction="row"
+              gap={1}
+              alignItems="center"
+              flex="auto"
+              justifyContent="space-between"
+            >
+              {strToRender ? strToRender : "\xa0"}
+              {openPlotPanelIconElem}
+            </Stack>
+          </TableCell>
+        </>
       );
     },
-    [],
+    [classes.htmlTableCell, numericPrecision],
   );
 
   const renderKeyValueSections = useCallback((): React.ReactNode => {
     const formattedKeyVals: FormattedKeyValue[] = getFormattedKeyValues(info.status);
-    let inCollapsedSection = false;
-    let ellipsisShown = false;
+
     return formattedKeyVals.map(({ key, value, keyHtml, valueHtml }, idx) => {
-      const keyIsSection = value.length === 0 && (key.startsWith("==") || key.startsWith("--"));
-      const valIsSection = key.length === 0 && (key.startsWith("==") || value.startsWith("--"));
-      if (keyIsSection || valIsSection) {
-        const sectionObj = { name: info.status.name, section: `${key}${value}` };
-        inCollapsedSection = collapsedSections.some(
-          ({ name, section }) => name === sectionObj.name && section === sectionObj.section,
-        );
-        ellipsisShown = false;
-        return (
-          <tr key={idx} onClick={() => onClickSection(sectionObj)}>
-            <th className={classes.sectionHeader} colSpan={2}>
-              {key}
-              {value}
-            </th>
-          </tr>
-        );
-      } else if (inCollapsedSection) {
-        if (ellipsisShown) {
-          return ReactNull;
-        }
-        ellipsisShown = true;
-        return (
-          <tr key={idx}>
-            <td colSpan={2} className={classes.collapsedSection}>
-              &hellip;
-            </td>
-          </tr>
-        );
-      }
       // We need both `hardware_id` and `name`; one of them is not enough. That's also how we identify
       // what to show in this very panel; see `selectedHardwareId` AND `selectedName` in the config.
       const valuePath = `${topicToRender}.status[:]{hardware_id=="${info.status.hardware_id}"}{name=="${info.status.name}"}.values[:]{key=="${key}"}.value`;
+
       let openPlotPanelIconElem = undefined;
       if (value.length > 0) {
         openPlotPanelIconElem = !isNaN(Number(value)) ? (
-          <Icon
-            fade
-            dataTest="open-plot-icon"
-            className={classes.icon}
-            onClick={() => openSiblingPlotPanel(openSiblingPanel, valuePath)}
-            tooltip="Line chart"
+          <IconButton
+            className={classes.iconButton}
+            title="Open in Plot panel"
+            color="inherit"
+            size="small"
+            data-testid="open-plot-icon"
+            onClick={() => {
+              openSiblingPlotPanel(openSiblingPanel, valuePath);
+            }}
           >
-            <ChartLineVariantIcon />
-          </Icon>
+            <ShowChartIcon fontSize="inherit" />
+          </IconButton>
         ) : (
-          <Icon
-            fade
-            className={classes.icon}
-            onClick={() => openSiblingStateTransitionsPanel(openSiblingPanel, valuePath)}
-            tooltip="State Transitions"
+          <IconButton
+            className={classes.iconButton}
+            title="Open in State Transitions panel"
+            color="inherit"
+            size="small"
+            onClick={() => {
+              openSiblingStateTransitionsPanel(openSiblingPanel, valuePath);
+            }}
           >
-            <DotsHorizontalIcon />
-          </Icon>
+            <PowerInputIcon fontSize="inherit" />
+          </IconButton>
         );
       }
       return (
-        <tr className={classes.interactiveRow} key={idx}>
+        <TableRow key={idx} hover>
           {renderKeyValueCell(keyHtml, key)}
           {renderKeyValueCell(valueHtml, value, openPlotPanelIconElem)}
-        </tr>
+        </TableRow>
       );
     });
-  }, [
-    classes,
-    collapsedSections,
-    info.status,
-    onClickSection,
-    openSiblingPanel,
-    renderKeyValueCell,
-    topicToRender,
-  ]);
+  }, [classes.iconButton, info.status, openSiblingPanel, renderKeyValueCell, topicToRender]);
 
-  const getSectionsCollapsedForCurrentName = useCallback((): {
-    name: string;
-    section: string;
-  }[] => {
-    return collapsedSections.filter(({ name }) => name === info.status.name);
-  }, [collapsedSections, info.status.name]);
-
-  const getSectionsThatCanBeCollapsed = useCallback((): FormattedKeyValue[] => {
-    const formattedKeyVals = getFormattedKeyValues(info.status);
-    return formattedKeyVals.filter(({ key, value }) => {
-      const keyIsSection = value.length === 0 && (key.startsWith("==") || key.startsWith("--"));
-      const valIsSection = key.length === 0 && (value.startsWith("==") || value.startsWith("--"));
-      return keyIsSection || valIsSection;
-    });
-  }, [info.status]);
-
-  const toggleSections = useCallback((): void => {
-    const newSectionsForCurrentName =
-      getSectionsCollapsedForCurrentName().length > 0
-        ? []
-        : getSectionsThatCanBeCollapsed().map(({ key, value }) => ({
-            name: info.status.name,
-            section: `${key}${value}`,
-          }));
-    const otherSections = collapsedSections.filter(({ name }) => name !== info.status.name);
-    saveConfig({ collapsedSections: newSectionsForCurrentName.concat(otherSections) });
-  }, [
-    collapsedSections,
-    getSectionsCollapsedForCurrentName,
-    getSectionsThatCanBeCollapsed,
-    info.status.name,
-    saveConfig,
-  ]);
-
-  const statusClass = cx({
-    [classes.ok]: LEVEL_NAMES[info.status.level] === "ok",
-    [classes.error]: LEVEL_NAMES[info.status.level] === "error",
-    [classes.warn]: LEVEL_NAMES[info.status.level] === "warn",
-    [classes.stale]: LEVEL_NAMES[info.status.level] === "stale",
-    [classes.unknown]: LEVEL_NAMES[info.status.level] === "unknown",
-  });
+  const STATUS_COLORS: Record<number, string> = {
+    [LEVELS.OK]: "success.main",
+    [LEVELS.ERROR]: "error.main",
+    [LEVELS.WARN]: "warning.main",
+    [LEVELS.STALE]: "info.main",
+  };
 
   return (
     <div>
       <div
         className={classes.resizeHandle}
-        style={{ left: `${100 * splitFraction}%` }}
+        style={{
+          left: `${100 * splitFraction}%`,
+        }}
         onMouseDown={resizeMouseDown}
-        data-test-resizehandle
+        data-testid-resizehandle
       />
-      <table className={classes.table} ref={tableRef}>
-        <tbody>
+      <Table className={classes.table} size="small" ref={tableRef}>
+        <TableBody>
           {/* Use a dummy row to fix the column widths */}
-          <tr style={{ height: 0 }}>
-            <td style={{ padding: 0, width: `${100 * splitFraction}%`, borderRight: "none" }} />
-            <td style={{ padding: 0, borderLeft: "none" }} />
-          </tr>
-          <tr>
-            <th
-              className={cx(classes.sectionHeader, statusClass)}
-              data-test="DiagnosticStatus-display-name"
-              colSpan={2}
-            >
+          <TableRow style={{ height: 0 }}>
+            <TableCell
+              padding="none"
+              style={{ width: `${100 * splitFraction}%`, borderRight: "none" }}
+            />
+            <TableCell padding="none" style={{ borderLeft: "none" }} />
+          </TableRow>
+          <TableRow className={classes.tableHeaderRow}>
+            <TableCell variant="head" data-testid="DiagnosticStatus-display-name" colSpan={2}>
               <Tooltip
-                placement="bottom"
-                contents={
-                  <div>
-                    Hardware ID: <code>{info.status.hardware_id}</code>
-                    <br />
-                    Name: <code>{info.status.name}</code>
-                  </div>
+                arrow
+                title={
+                  <>
+                    <Typography variant="body2">
+                      Hardware ID: <code>{info.status.hardware_id}</code>
+                    </Typography>
+                    <Typography variant="body2">
+                      Name: <code>{info.status.name}</code>
+                    </Typography>
+                  </>
                 }
               >
-                <span>{info.displayName}</span>
+                <Typography
+                  color={STATUS_COLORS[info.status.level]}
+                  variant="subtitle1"
+                  fontWeight={800}
+                >
+                  {info.displayName}
+                </Typography>
               </Tooltip>
-            </th>
-          </tr>
-          <tr className={cx(classes.interactiveRow, statusClass)}>
-            <td colSpan={2}>
-              <Stack direction="row" flex="auto" justifyContent="space-between">
-                <div>
-                  {info.status.message}{" "}
-                  <Icon
-                    fade
-                    className={classes.icon}
-                    onClick={() =>
+            </TableCell>
+          </TableRow>
+          <TableRow hover>
+            <TableCell colSpan={2} padding="checkbox">
+              <Stack
+                direction="row"
+                flex="auto"
+                alignItems="center"
+                justifyContent="space-between"
+                gap={1}
+              >
+                <Typography
+                  flex="auto"
+                  color={STATUS_COLORS[info.status.level]}
+                  variant="inherit"
+                  fontWeight={800}
+                >
+                  {info.status.message}
+                </Typography>
+                <Stack direction="row" alignItems="center" justifyContent="space-between" gap={1}>
+                  <IconButton
+                    className={classes.iconButton}
+                    title="Open in State Transitions panel"
+                    size="small"
+                    onClick={() => {
                       openSiblingStateTransitionsPanel(
                         openSiblingPanel,
                         `${topicToRender}.status[:]{hardware_id=="${info.status.hardware_id}"}{name=="${info.status.name}"}.message`,
-                      )
-                    }
-                    tooltip="State Transitions"
+                      );
+                    }}
                   >
-                    <DotsHorizontalIcon />
-                  </Icon>
-                </div>
-                {getSectionsThatCanBeCollapsed().length > 0 && (
-                  <div
-                    style={{ color: theme.semanticColors.bodyText, cursor: "pointer" }}
-                    onClick={toggleSections}
-                  >
-                    <Icon
-                      size="medium"
-                      fade
-                      style={{ padding: 4 }}
-                      tooltip={
-                        getSectionsCollapsedForCurrentName().length > 0
-                          ? "Expand all"
-                          : "Collapse all"
-                      }
-                    >
-                      {getSectionsCollapsedForCurrentName().length > 0 ? (
-                        <ChevronUpIcon />
-                      ) : (
-                        <ChevronDownIcon />
-                      )}
-                    </Icon>
-                  </div>
-                )}
+                    <PowerInputIcon fontSize="inherit" />
+                  </IconButton>
+                </Stack>
               </Stack>
-            </td>
-          </tr>
+            </TableCell>
+          </TableRow>
           {renderKeyValueSections()}
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
     </div>
   );
+}
+
+// Returns true if the input string can be parsed as a float or an integer using
+// parseFloat(). Hex and octal numbers will return false.
+function isFloatOrInteger(n: string): boolean {
+  if (n.startsWith("0") && n.length > 1) {
+    if (n[1] === "x" || n[1] === "X" || n[1] === "o" || n[1] === "O") {
+      return false;
+    }
+  }
+  return !isNaN(parseFloat(n)) && isFinite(Number(n));
 }

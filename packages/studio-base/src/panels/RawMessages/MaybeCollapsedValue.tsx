@@ -11,9 +11,8 @@
 //   found at http://www.apache.org/licenses/LICENSE-2.0
 //   You may not use this file except in compliance with the License.
 
+import { Tooltip } from "@mui/material";
 import { useCallback, useState } from "react";
-
-import Tooltip from "@foxglove/studio-base/components/Tooltip";
 
 // Strings longer than this many characters will start off collapsed.
 const COLLAPSE_TEXT_OVER_LENGTH = 512;
@@ -25,14 +24,24 @@ export default function MaybeCollapsedValue({ itemLabel }: Props): JSX.Element {
 
   const [showingEntireLabel, setShowingEntireLabel] = useState(!lengthOverLimit);
 
-  const expandText = useCallback(() => setShowingEntireLabel(true), []);
+  const expandText = useCallback(() => {
+    setShowingEntireLabel(true);
+  }, []);
 
   const truncatedItemText = showingEntireLabel
     ? itemLabel
     : itemLabel.slice(0, COLLAPSE_TEXT_OVER_LENGTH);
 
+  // Tooltip is expensive to render. Skip it if we're not truncating.
+  if (!lengthOverLimit) {
+    return <span>{itemLabel}</span>;
+  }
+
   return (
-    <Tooltip contents={!showingEntireLabel ? "Text was truncated, click to see all" : undefined}>
+    <Tooltip
+      title={!showingEntireLabel ? "Text was truncated, click to see all" : ""}
+      placement="top"
+    >
       <span onClick={expandText} style={{ cursor: !showingEntireLabel ? "pointer" : "inherit" }}>
         {`${truncatedItemText}${!showingEntireLabel ? "..." : ""}`}
       </span>

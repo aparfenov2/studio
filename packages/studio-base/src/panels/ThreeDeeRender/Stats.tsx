@@ -4,8 +4,8 @@
 
 import { useEffect, useState } from "react";
 
-import { Renderer } from "./Renderer";
-import { useRenderer, useRendererEvent } from "./RendererContext";
+import type { IRenderer } from "./IRenderer";
+import { useRendererEvent } from "./RendererContext";
 
 let stats: THREEStats | undefined;
 let drawCallsPanel: Panel | undefined;
@@ -17,7 +17,7 @@ let maxTriangles = 0;
 let maxTextures = 0;
 let maxGeometries = 0;
 
-function update(renderer: Renderer) {
+function update(renderer: IRenderer) {
   maxDrawCalls = Math.max(maxDrawCalls, renderer.gl.info.render.calls);
   maxTriangles = Math.max(maxTriangles, renderer.gl.info.render.triangles);
   maxTextures = Math.max(maxTextures, renderer.gl.info.memory.textures);
@@ -32,14 +32,9 @@ function update(renderer: Renderer) {
 
 export function Stats(): JSX.Element {
   const [div, setDiv] = useState<HTMLDivElement | ReactNull>(ReactNull);
-  const renderer = useRenderer();
 
-  useRendererEvent("startFrame", () => stats?.begin());
-  useRendererEvent("endFrame", () => {
-    stats?.end();
-    if (renderer) {
-      update(renderer);
-    }
+  useRendererEvent("endFrame", (_curTime, curRenderer) => {
+    update(curRenderer);
   });
 
   useEffect(() => {
@@ -78,99 +73,95 @@ export function Stats(): JSX.Element {
 // modified to use a maximum value of ~33ms instead of the default 200ms and
 // the FPS panel is removed
 class THREEStats {
-  mode = 0;
-  container: HTMLDivElement;
-  dom: HTMLDivElement;
-  beginTime: number;
-  prevTime: number;
-  frames = 0;
-  msPanel: Panel;
+  #mode = 0;
+  #container: HTMLDivElement;
+  public dom: HTMLDivElement;
+  #beginTime: number;
+  #prevTime: number;
+  #msPanel: Panel;
   // fpsPanel: Panel;
-  memPanel: Panel;
+  #memPanel: Panel;
 
-  constructor() {
-    this.container = document.createElement("div");
-    this.container.style.cssText =
+  public constructor() {
+    this.#container = document.createElement("div");
+    this.#container.style.cssText =
       "position:fixed;top:0;left:0;cursor:pointer;opacity:0.9;z-index:10000";
-    this.container.addEventListener(
+    this.#container.addEventListener(
       "click",
       (event) => {
         event.preventDefault();
-        this.showPanel(++this.mode % this.container.children.length);
+        this.showPanel(++this.#mode % this.#container.children.length);
       },
       false,
     );
-    this.dom = this.container;
+    this.dom = this.#container;
 
-    this.beginTime = performance.now();
-    this.prevTime = this.beginTime;
+    this.#beginTime = performance.now();
+    this.#prevTime = this.#beginTime;
 
-    this.msPanel = this.addPanel(new Panel("MS", "#0f0", "#020"));
+    this.#msPanel = this.addPanel(new Panel("MS", "#9480ed", "#1e1a2f"));
     // this.fpsPanel = this.addPanel(new Panel("FPS", "#0ff", "#002"));
-    this.memPanel = this.addPanel(new Panel("MB", "#f08", "#201"));
+    this.#memPanel = this.addPanel(new Panel("MB", "#f08", "#201"));
 
     this.showPanel(0);
   }
 
-  addPanel(panel: Panel) {
-    this.container.appendChild(panel.dom);
+  public addPanel(panel: Panel) {
+    this.#container.appendChild(panel.dom);
     return panel;
   }
 
-  showPanel(id: number) {
-    for (let i = 0; i < this.container.children.length; i++) {
-      const child = this.container.children[i] as HTMLElement;
+  public showPanel(id: number) {
+    for (let i = 0; i < this.#container.children.length; i++) {
+      const child = this.#container.children[i] as HTMLElement;
       child.style.display = i === id ? "block" : "none";
     }
 
-    this.mode = id;
+    this.#mode = id;
   }
 
-  begin = () => {
-    this.beginTime = performance.now();
+  public begin = () => {
+    this.#beginTime = performance.now();
   };
 
-  end = () => {
-    this.frames++;
-
+  public end = () => {
     const time = performance.now();
 
-    this.msPanel.update(time - this.beginTime, 1000 / 30);
+    this.#msPanel.update(time - this.#beginTime, 1000 / 30);
 
-    if (time >= this.prevTime + 1000) {
+    if (time >= this.#prevTime + 1000) {
       // this.fpsPanel.update((this.frames * 1000) / (time - this.prevTime), 100);
 
-      this.prevTime = time;
-      this.frames = 0;
+      this.#prevTime = time;
 
       const memory = (
         performance as unknown as { memory: { usedJSHeapSize: number; jsHeapSizeLimit: number } }
       ).memory;
-      this.memPanel.update(memory.usedJSHeapSize / 1048576, memory.jsHeapSizeLimit / 1048576);
+      this.#memPanel.update(memory.usedJSHeapSize / 1048576, memory.jsHeapSizeLimit / 1048576);
     }
 
     return time;
   };
 
-  update = () => {
-    this.beginTime = this.end();
+  public update = () => {
+    this.#beginTime = this.end();
   };
 }
 
 // Adapted from <https://github.com/mrdoob/stats.js/>. License: MIT.
 class Panel {
-  dom: HTMLCanvasElement;
-  context: CanvasRenderingContext2D;
-  min = Infinity;
-  max = 0;
-  name: string;
-  fg: string;
-  bg: string;
+  public dom: HTMLCanvasElement;
+  #context: CanvasRenderingContext2D;
+  #min = Infinity;
+  #max = 0;
+  #name: string;
+  #fg: string;
+  #bg: string;
 
-  constructor(name: string, fg: string, bg: string) {
-    this.name = name;
-    this.fg = fg;
-    this.bg = bg;
+  public constructor(name: string, fg: string, bg: string) {
+    this.#name = name;
+    this.#fg = fg;
+    this.#bg = bg;
 
     const PR = Math.round(window.devicePixelRatio);
     const WIDTH = 80 * PR,
@@ -203,10 +194,10 @@ class Panel {
     context.fillRect(GRAPH_X, GRAPH_Y, GRAPH_WIDTH, GRAPH_HEIGHT);
 
     this.dom = canvas;
-    this.context = context;
+    this.#context = context;
   }
 
-  update(value: number, maxValue: number): void {
+  public update(value: number, maxValue: number): void {
     const PR = Math.round(window.devicePixelRatio);
     const WIDTH = 80 * PR,
       TEXT_X = 3 * PR,
@@ -216,20 +207,20 @@ class Panel {
       GRAPH_WIDTH = 74 * PR,
       GRAPH_HEIGHT = 30 * PR;
 
-    this.min = Math.min(this.min, value);
-    this.max = Math.max(this.max, value);
+    this.#min = Math.min(this.#min, value);
+    this.#max = Math.max(this.#max, value);
 
-    this.context.fillStyle = this.bg;
-    this.context.globalAlpha = 1;
-    this.context.fillRect(0, 0, WIDTH, GRAPH_Y);
-    this.context.fillStyle = this.fg;
-    this.context.fillText(
-      `${Math.round(value)} ${this.name} (${Math.round(this.min)}-${Math.round(this.max)})`,
+    this.#context.fillStyle = this.#bg;
+    this.#context.globalAlpha = 1;
+    this.#context.fillRect(0, 0, WIDTH, GRAPH_Y);
+    this.#context.fillStyle = this.#fg;
+    this.#context.fillText(
+      `${Math.round(value)} ${this.#name} (${Math.round(this.#min)}-${Math.round(this.#max)})`,
       TEXT_X,
       TEXT_Y,
     );
 
-    this.context.drawImage(
+    this.#context.drawImage(
       this.dom,
       GRAPH_X + PR,
       GRAPH_Y,
@@ -241,11 +232,11 @@ class Panel {
       GRAPH_HEIGHT,
     );
 
-    this.context.fillRect(GRAPH_X + GRAPH_WIDTH - PR, GRAPH_Y, PR, GRAPH_HEIGHT);
+    this.#context.fillRect(GRAPH_X + GRAPH_WIDTH - PR, GRAPH_Y, PR, GRAPH_HEIGHT);
 
-    this.context.fillStyle = this.bg;
-    this.context.globalAlpha = 0.9;
-    this.context.fillRect(
+    this.#context.fillStyle = this.#bg;
+    this.#context.globalAlpha = 0.9;
+    this.#context.fillRect(
       GRAPH_X + GRAPH_WIDTH - PR,
       GRAPH_Y,
       PR,

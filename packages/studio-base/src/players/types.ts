@@ -11,21 +11,15 @@
 //   found at http://www.apache.org/licenses/LICENSE-2.0
 //   You may not use this file except in compliance with the License.
 
-import { DeepReadonly } from "ts-essentials";
-
-import { RosMsgDefinition } from "@foxglove/rosmsg";
+import { MessageDefinition } from "@foxglove/message-definition";
 import { Time } from "@foxglove/rostime";
 import type { MessageEvent, ParameterValue } from "@foxglove/studio";
+import { Immutable } from "@foxglove/studio";
+import { Asset } from "@foxglove/studio-base/components/PanelExtensionAdapter";
 import { GlobalVariables } from "@foxglove/studio-base/hooks/useGlobalVariables";
-import {
-  AverageThroughput,
-  RandomAccessDataProviderStall,
-  InitializationPerformanceMetadata,
-} from "@foxglove/studio-base/randomAccessDataProviders/types";
 import { RosDatatypes } from "@foxglove/studio-base/types/RosDatatypes";
 import { Range } from "@foxglove/studio-base/util/ranges";
 import { NotificationSeverity } from "@foxglove/studio-base/util/sendNotification";
-import { TimestampMethod } from "@foxglove/studio-base/util/time";
 
 // re-exported until other import sites are updated from players/types to @foxglove/studio
 export type { MessageEvent };
@@ -33,9 +27,12 @@ export type { MessageEvent };
 export type MessageDefinitionsByTopic = {
   [topic: string]: string;
 };
+
 export type ParsedMessageDefinitionsByTopic = {
-  [topic: string]: RosMsgDefinition[];
+  [topic: string]: MessageDefinition[];
 };
+
+export type TopicSelection = Map<string, SubscribePayload>;
 
 // A `Player` is a class that manages playback state. It manages subscriptions,
 // current time, which topics and datatypes are available, and so on.
@@ -47,34 +44,32 @@ export interface Player {
   // should return a promise from the listener that resolves when the UI has finished updating, so
   // that we don't get overwhelmed with new state that we can't keep up with. The Player is
   // responsible for appropriately throttling based on when we resolve this promise.
-  setListener(listener: (arg0: PlayerState) => Promise<void>): void;
+  setListener(listener: (playerState: PlayerState) => Promise<void>): void;
   // Close the player; i.e. terminate any connections it might have open.
   close(): void;
   // Set a new set of subscriptions/advertisers. This might trigger fetching
   // new data, which might in turn trigger a backfill of messages.
-  setSubscriptions(subscriptions: SubscribePayload[]): void;
+  setSubscriptions(subscriptions: Immutable<SubscribePayload[]>): void;
   setPublishers(publishers: AdvertiseOptions[]): void;
   // Modify a remote parameter such as a rosparam.
   setParameter(key: string, value: ParameterValue): void;
   // If the Player supports publishing (i.e. PlayerState#capabilities contains
   // PlayerCapabilities.advertise), publish a message.
   publish(request: PublishPayload): void;
+  // If the player support service calls (i.e. PlayerState#capabilities contains PlayerCapabilities.callServices)
+  // this will make a service call to the named service with the request payload.
+  callService(service: string, request: unknown): Promise<unknown>;
+  // Asset fetching. Available if `capabilities` contains PlayerCapabilities.assets.
+  fetchAsset?(uri: string): Promise<Asset>;
   // Basic playback controls. Available if `capabilities` contains PlayerCapabilities.playbackControl.
   startPlayback?(): void;
   pausePlayback?(): void;
-  seekPlayback?(time: Time, backfillDuration?: Time): void;
+  seekPlayback?(time: Time): void;
+  playUntil?(time: Time): void;
   // Seek to a particular time. Might trigger backfilling.
   // If the Player supports non-real-time speeds (i.e. PlayerState#capabilities contains
   // PlayerCapabilities.setSpeed), set that speed. E.g. 1.0 is real time, 0.2 is 20% of real time.
   setPlaybackSpeed?(speedFraction: number): void;
-  // Request a backfill for Players that support it. Allowed to be a no-op if the player does not
-  // support backfilling, or if it's already playing (in which case we'd get new messages soon anyway).
-  // This is currently called after subscriptions changed. We do our best in the MessagePipeline to
-  // not call this method too often (e.g. it's debounced).
-  // TODO(JP): We can't call this too often right now, since it clears out all existing data in
-  // panels, so e.g. the Plot panel which might have a lot of data loaded would get cleared to just
-  // a small backfilled amount of data. We should somehow make this more granular.
-  requestBackfill(): void;
   // Set the globalVariables for Players that support it.
   // This is generally used to pass new globalVariables to the UserNodePlayer
   setGlobalVariables(globalVariables: GlobalVariables): void;
@@ -84,6 +79,7 @@ export enum PlayerPresence {
   NOT_PRESENT = "NOT_PRESENT",
   INITIALIZING = "INITIALIZING",
   RECONNECTING = "RECONNECTING",
+  BUFFERING = "BUFFERING",
   PRESENT = "PRESENT",
   ERROR = "ERROR",
 }
@@ -95,7 +91,7 @@ export type PlayerProblem = {
   tip?: string;
 };
 
-export type PlayerURLState = DeepReadonly<{
+export type PlayerURLState = Immutable<{
   sourceId: string;
   parameters?: Record<string, string>;
 }>;
@@ -105,13 +101,19 @@ export type PlayerState = {
   presence: PlayerPresence;
 
   // Show some sort of progress indication in the playback bar; see `type Progress` for more details.
-  // TODO(JP): Maybe we should unify some progress and the other initialization fields above into
-  // one "status" object?
   progress: Progress;
 
   // Capabilities of this particular `Player`, which are not shared across all players.
   // See `const PlayerCapabilities` for more details.
-  capabilities: typeof PlayerCapabilities[keyof typeof PlayerCapabilities][];
+  capabilities: (typeof PlayerCapabilities)[keyof typeof PlayerCapabilities][];
+
+  /**
+   * Identifies the semantics of the data being played back, such as which topics or parameters are
+   * semantically meaningful or normalization conventions to use. This typically maps to a shorthand
+   * identifier for a robotics framework such as "ros1", "ros2", or "ulog". See the MCAP profiles
+   * concept at <https://github.com/foxglove/mcap/blob/main/docs/specification/appendix.md#well-known-profiles>.
+   */
+  profile: string | undefined;
 
   // A unique id for this player (typically a UUID generated on construction). This is used to clear
   // out any data when switching to a new player.
@@ -120,9 +122,6 @@ export type PlayerState = {
   // String name for the player
   // The player could set this value to represent the current connection, name, ports, etc.
   name?: string;
-
-  /** A path to a file on disk currently being accessed by the player */
-  filePath?: string;
 
   // Surface issues during playback or player initialization
   problems?: PlayerProblem[];
@@ -140,7 +139,7 @@ export type PlayerStateActiveData = {
   // and should be immediately following the previous array of messages that was emitted as part of
   // this state. If there is a discontinuity in messages, `lastSeekTime` should be different than
   // the previous state. Panels collect these messages using the `PanelAPI`.
-  messages: readonly MessageEvent<unknown>[];
+  messages: readonly MessageEvent[];
   totalBytesReceived: number; // always-increasing
 
   // The current playback position, which will be shown in the playback bar. This time should be
@@ -168,14 +167,8 @@ export type PlayerStateActiveData = {
   // E.g. 1.0 is real time, 0.2 is 20% of real time.
   speed: number;
 
-  // The order in which messages are published.
-  messageOrder: TimestampMethod;
-
   // The last time a seek / discontinuity in messages happened. This will clear out data within
   // `PanelAPI` so we're not looking at stale data.
-  // TODO(JP): This currently is a time per `Date.now()`, but we don't need that anywhere, so we
-  // should change this to a `resetMessagesId` where you just have to set it to a unique id (better
-  // to have an id than a boolean, in case the listener skips parsing a state for some reason).
   lastSeekTime: number;
 
   // A list of topics that panels can subscribe to. This list may change across states,
@@ -216,25 +209,39 @@ export type Topic = {
   // a consistent representation for topics that people recognize though.
   name: string;
   // Name of the datatype (see `type PlayerStateActiveData` for details).
-  datatype: string;
+  schemaName: string | undefined;
+  // Name of the topic before topic aliasing, if any.
+  aliasedFromName?: string;
 };
+
+export type TopicWithSchemaName = Topic & { schemaName: string };
 
 export type TopicStats = {
   // The number of messages observed on the topic.
   numMessages: number;
-  // Timestamp of the first observed message on this topic.
+  // Timestamp of the first observed message on this topic. Only set for static data sources such as
+  // local files or servers that provide a fixed set of data.
   firstMessageTime?: Time;
-  // Timestamp of the last observed message on this topic.
+  // Timestamp of the last observed message on this topic. Only set for static data sources such as
+  // local files or servers that provide a fixed set of data.
   lastMessageTime?: Time;
 };
 
-type RosSingularField = number | string | boolean | RosObject; // No time -- consider it a message.
+type RosTypedArray =
+  | Int8Array
+  | Uint8Array
+  | Int16Array
+  | Uint16Array
+  | Int32Array
+  | Uint32Array
+  | Float32Array
+  | Float64Array;
+
+type RosSingularField = number | string | boolean | RosObject | undefined; // No time -- consider it a message.
 export type RosValue =
   | RosSingularField
   | readonly RosSingularField[]
-  | Uint8Array
-  | Int8Array
-  | undefined
+  | RosTypedArray
   // eslint-disable-next-line no-restricted-syntax
   | null;
 
@@ -246,8 +253,13 @@ export type RosObject = Readonly<{
 // the underlying ArrayBuffers.
 export type MessageBlock = {
   readonly messagesByTopic: {
-    readonly [topic: string]: MessageEvent<unknown>[];
+    readonly [topic: string]: MessageEvent[];
   };
+  /**
+   * Indicates which topics are yet to be fully loaded for this block. Can be used to track the
+   * progress of block loading. For a fully loaded block this will be empty or undefined.
+   */
+  needTopics?: TopicSelection;
   readonly sizeInBytes: number;
 };
 
@@ -270,22 +282,34 @@ export type SubscriptionPreloadType =
   | "full" // Fetch messages for the entire content range.
   | "partial"; // Fetch messages as needed.
 
-// Represents a subscription to a single topic, for use in `setSubscriptions`.
+/**
+ * Represents a subscription to a single topic, for use in `setSubscriptions`.
+ */
 export type SubscribePayload = {
-  // The topic name to subscribe to.
+  /**
+   * The name of the topic to subscribe to.
+   */
   topic: string;
+  /**
+   * If defined the source will return only these fields from messages.
+   * Otherwise entire messages will be returned.
+   */
+  fields?: string[];
+  /**
+   * Defines the range of messages to subscribe to.
+   */
   preloadType?: SubscriptionPreloadType;
 };
 
 // Represents a single topic publisher, for use in `setPublishers`.
 export type AdvertiseOptions = {
-  // The topic name
+  /** The topic name */
   topic: string;
 
-  // The datatype name
-  datatype: string;
+  /** The schema name */
+  schemaName: string;
 
-  // Additional advertise options
+  /** Additional player-specific advertise options */
   options?: Record<string, unknown>;
 };
 
@@ -296,6 +320,12 @@ export type PublishPayload = { topic: string; msg: Record<string, unknown> };
 export const PlayerCapabilities = {
   // Publishing messages. Need to be connected to some sort of live robotics system (e.g. ROS).
   advertise: "advertise",
+
+  // Fetching assets.
+  assets: "assets",
+
+  // Calling services
+  callServices: "callServices",
 
   // Setting speed to something that is not real time.
   setSpeed: "setSpeed",
@@ -315,7 +345,6 @@ export const PlayerCapabilities = {
 export interface PlayerMetricsCollectorInterface {
   setProperty(key: string, value: string | number | boolean): void;
   playerConstructed(): void;
-  initialized(args?: { isSampleDataSource: boolean }): void;
   play(speed: number): void;
   seek(time: Time): void;
   setSpeed(speed: number): void;
@@ -324,9 +353,6 @@ export interface PlayerMetricsCollectorInterface {
   setSubscriptions(subscriptions: SubscribePayload[]): void;
   recordBytesReceived(bytes: number): void;
   recordPlaybackTime(time: Time, params: { stillLoadingData: boolean }): void;
-  recordDataProviderPerformance(metadata: AverageThroughput): void;
   recordUncachedRangeRequest(): void;
   recordTimeToFirstMsgs(): void;
-  recordDataProviderInitializePerformance(metadata: InitializationPerformanceMetadata): void;
-  recordDataProviderStall(metadata: RandomAccessDataProviderStall): void;
 }

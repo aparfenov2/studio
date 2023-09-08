@@ -11,16 +11,27 @@
 //   found at http://www.apache.org/licenses/LICENSE-2.0
 //   You may not use this file except in compliance with the License.
 
+import { StoryObj } from "@storybook/react";
+import { fireEvent, screen } from "@storybook/testing-library";
 import { DndProvider } from "react-dnd";
 import { HTML5Backend } from "react-dnd-html5-backend";
 
-import MockPanelContextProvider from "@foxglove/studio-base/components/MockPanelContextProvider";
 import Panel from "@foxglove/studio-base/components/Panel";
 import PanelToolbar from "@foxglove/studio-base/components/PanelToolbar";
 import { PanelCatalog, PanelInfo } from "@foxglove/studio-base/context/PanelCatalogContext";
 import PanelSetup from "@foxglove/studio-base/stories/PanelSetup";
 
 import PanelLayout from "./PanelLayout";
+
+async function openPanelMenu(): Promise<void> {
+  const buttons = await screen.findAllByTestId("panel-menu");
+  fireEvent.click(buttons[0]!);
+}
+
+async function goFullScreen(): Promise<void> {
+  await openPanelMenu();
+  fireEvent.click(screen.getAllByTestId("panel-menu-fullscreen")[0]!);
+}
 
 const allPanels: readonly PanelInfo[] = [
   { title: "Some Panel", type: "Sample1", module: async () => await new Promise(() => {}) },
@@ -64,123 +75,145 @@ const allPanels: readonly PanelInfo[] = [
 ];
 
 class MockPanelCatalog implements PanelCatalog {
-  getPanels(): readonly PanelInfo[] {
+  public getPanels(): readonly PanelInfo[] {
     return allPanels;
   }
-  getPanelByType(type: string): PanelInfo | undefined {
+  public getPanelByType(type: string): PanelInfo | undefined {
     return allPanels.find((panel) => !panel.config && panel.type === type);
   }
 }
-
-const DEFAULT_CLICK_DELAY = 100;
 
 export default {
   title: "components/PanelLayout",
 };
 
-export const PanelNotFound = (): JSX.Element => {
-  return (
-    <DndProvider backend={HTML5Backend}>
-      <PanelSetup
-        onMount={() => {
-          setTimeout(() => {
-            (document.querySelectorAll("[data-test=panel-menu]")[0] as any).click();
-          }, DEFAULT_CLICK_DELAY);
-        }}
-        fixture={{ topics: [], datatypes: new Map(), frame: {}, layout: "UnknownPanel!4co6n9d" }}
-        omitDragAndDrop
-      >
+export const PanelNotFound: StoryObj = {
+  render: function Story() {
+    return (
+      <DndProvider backend={HTML5Backend}>
+        <PanelSetup
+          fixture={{ topics: [], datatypes: new Map(), frame: {}, layout: "UnknownPanel!4co6n9d" }}
+          omitDragAndDrop
+        >
+          <PanelLayout />
+        </PanelSetup>
+      </DndProvider>
+    );
+  },
+
+  parameters: { colorScheme: "dark" },
+  play: openPanelMenu,
+};
+
+export const PanelNotFoundLight: StoryObj = {
+  ...PanelNotFound,
+  parameters: { colorScheme: "light" },
+  play: openPanelMenu,
+};
+
+export const PanelWithError: StoryObj = {
+  render: () => {
+    return (
+      <DndProvider backend={HTML5Backend}>
+        <PanelSetup
+          panelCatalog={new MockPanelCatalog()}
+          fixture={{ topics: [], datatypes: new Map(), frame: {}, layout: "Sample2!4co6n9d" }}
+          omitDragAndDrop
+        >
+          <PanelLayout />
+        </PanelSetup>
+      </DndProvider>
+    );
+  },
+};
+
+export const RemoveUnknownPanel: StoryObj = {
+  render: function Story() {
+    return (
+      <DndProvider backend={HTML5Backend}>
+        <PanelSetup
+          fixture={{ topics: [], datatypes: new Map(), frame: {}, layout: "UnknownPanel!4co6n9d" }}
+          omitDragAndDrop
+        >
+          <PanelLayout />
+        </PanelSetup>
+      </DndProvider>
+    );
+  },
+
+  play: async () => {
+    (await screen.findAllByTestId("panel-menu")).forEach((button) => fireEvent.click(button));
+    (await screen.findAllByTestId("panel-menu-remove")).forEach((button) =>
+      fireEvent.click(button),
+    );
+  },
+};
+
+export const EmptyLayout: StoryObj = {
+  render: () => {
+    return (
+      <PanelSetup fixture={{ layout: undefined }}>
         <PanelLayout />
       </PanelSetup>
-    </DndProvider>
-  );
+    );
+  },
 };
-PanelNotFound.parameters = { colorScheme: "dark" };
-export const PanelNotFoundLight = Object.assign(PanelNotFound.bind(undefined), {
+
+export const EmptyLayoutChinese: StoryObj = {
+  ...EmptyLayout,
+  parameters: { forceLanguage: "zh" },
+};
+export const EmptyLayoutJapanese: StoryObj = {
+  ...EmptyLayout,
+  parameters: { forceLanguage: "ja" },
+};
+
+export const PanelLoading: StoryObj = {
+  render: () => {
+    return (
+      <DndProvider backend={HTML5Backend}>
+        <PanelSetup
+          panelCatalog={new MockPanelCatalog()}
+          fixture={{ topics: [], datatypes: new Map(), frame: {}, layout: "Sample1!4co6n9d" }}
+          omitDragAndDrop
+        >
+          <PanelLayout />
+        </PanelSetup>
+      </DndProvider>
+    );
+  },
+};
+
+export const FullScreen: StoryObj = {
+  render: function Story() {
+    return (
+      <DndProvider backend={HTML5Backend}>
+        <PanelSetup
+          panelCatalog={new MockPanelCatalog()}
+          fixture={{
+            topics: [],
+            datatypes: new Map(),
+            frame: {},
+            layout: { first: "Sample3!a", second: "Sample3!b", direction: "row" },
+            savedProps: {
+              "Sample3!a": { x: 1 },
+              "Sample3!b": { x: 2 },
+            },
+          }}
+          omitDragAndDrop
+        >
+          <PanelLayout />
+        </PanelSetup>
+      </DndProvider>
+    );
+  },
+
+  parameters: { colorScheme: "dark" },
+  play: goFullScreen,
+};
+
+export const FullScreenLight: StoryObj = {
+  ...FullScreen,
   parameters: { colorScheme: "light" },
-});
-
-export const PanelWithError = (): JSX.Element => {
-  return (
-    <DndProvider backend={HTML5Backend}>
-      <PanelSetup
-        panelCatalog={new MockPanelCatalog()}
-        fixture={{ topics: [], datatypes: new Map(), frame: {}, layout: "Sample2!4co6n9d" }}
-        omitDragAndDrop
-      >
-        <PanelLayout />
-      </PanelSetup>
-    </DndProvider>
-  );
+  play: goFullScreen,
 };
-
-export const RemoveUnknownPanel = (): JSX.Element => {
-  return (
-    <DndProvider backend={HTML5Backend}>
-      <PanelSetup
-        onMount={() => {
-          setTimeout(() => {
-            (document.querySelectorAll("[data-test=panel-menu]")[0] as any).click();
-            (document.querySelectorAll("[data-test=panel-menu-remove]")[0] as any).click();
-          }, DEFAULT_CLICK_DELAY);
-        }}
-        fixture={{ topics: [], datatypes: new Map(), frame: {}, layout: "UnknownPanel!4co6n9d" }}
-        omitDragAndDrop
-      >
-        <MockPanelContextProvider>
-          <PanelLayout />
-        </MockPanelContextProvider>
-      </PanelSetup>
-    </DndProvider>
-  );
-};
-
-export const PanelLoading = (): JSX.Element => {
-  return (
-    <DndProvider backend={HTML5Backend}>
-      <PanelSetup
-        panelCatalog={new MockPanelCatalog()}
-        fixture={{ topics: [], datatypes: new Map(), frame: {}, layout: "Sample1!4co6n9d" }}
-        omitDragAndDrop
-      >
-        <MockPanelContextProvider>
-          <PanelLayout />
-        </MockPanelContextProvider>
-      </PanelSetup>
-    </DndProvider>
-  );
-};
-
-export const FullScreen = (): JSX.Element => {
-  return (
-    <DndProvider backend={HTML5Backend}>
-      <PanelSetup
-        panelCatalog={new MockPanelCatalog()}
-        fixture={{
-          topics: [],
-          datatypes: new Map(),
-          frame: {},
-          layout: { first: "Sample3!a", second: "Sample3!b", direction: "row" },
-          savedProps: {
-            "Sample3!a": { x: 1 },
-            "Sample3!b": { x: 2 },
-          },
-        }}
-        omitDragAndDrop
-        onMount={() => {
-          setTimeout(() => {
-            (document.querySelectorAll("[data-test=panel-toolbar-fullscreen]")[0] as any).click();
-          }, DEFAULT_CLICK_DELAY);
-        }}
-      >
-        <MockPanelContextProvider>
-          <PanelLayout />
-        </MockPanelContextProvider>
-      </PanelSetup>
-    </DndProvider>
-  );
-};
-FullScreen.parameters = { colorScheme: "dark" };
-export const FullScreenLight = Object.assign(FullScreen.bind(undefined), {
-  parameters: { colorScheme: "light" },
-});

@@ -1,88 +1,81 @@
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
+import { TFunction } from "i18next";
+
 import { PanelInfo } from "@foxglove/studio-base/context/PanelCatalogContext";
 import { TAB_PANEL_TYPE } from "@foxglove/studio-base/util/globalConstants";
 
-import DataSourceInfoHelp from "./DataSourceInfo/index.help.md";
 import dataSourceInfoThumbnail from "./DataSourceInfo/thumbnail.png";
-import ImageViewHelp from "./Image/index.help.md";
-import imageViewThumbnail from "./Image/thumbnail.png";
-import InternalLogsHelp from "./InternalLogs/index.help.md";
-import LogHelp from "./Log/index.help.md";
+import gaugeThumbnail from "./Gauge/thumbnail.png";
+import imageThumbnail from "./Image/thumbnail.png";
+import indicatorThumbnail from "./Indicator/thumbnail.png";
 import logThumbnail from "./Log/thumbnail.png";
-import MapHelp from "./Map/index.help.md";
 import mapThumbnail from "./Map/thumbnail.png";
-import NodePlaygroundHelp from "./NodePlayground/index.help.md";
 import nodePlaygroundThumbnail from "./NodePlayground/thumbnail.png";
-import ParametersHelp from "./Parameters/index.help.md";
-import PlaybackPerformanceHelp from "./PlaybackPerformance/index.help.md";
-import PlotHelp from "./Plot/index.help.md";
+import parametersThumbnail from "./Parameters/thumbnail.png";
 import plotThumbnail from "./Plot/thumbnail.png";
-import PublishHelp from "./Publish/index.help.md";
 import publishThumbnail from "./Publish/thumbnail.png";
-import RawMessagesHelp from "./RawMessages/index.help.md";
 import rawMessagesThumbnail from "./RawMessages/thumbnail.png";
-import StateTransitionsHelp from "./StateTransitions/index.help.md";
 import stateTransitionsThumbnail from "./StateTransitions/thumbnail.png";
-import TabHelp from "./Tab/index.help.md";
 import tabThumbnail from "./Tab/thumbnail.png";
-import TableHelp from "./Table/index.help.md";
 import tableThumbnail from "./Table/thumbnail.png";
-import TeleopHelp from "./Teleop/index.help.md";
 import teleopThumbnail from "./Teleop/thumbnail.png";
-import ThreeDeeRenderHelp from "./ThreeDeeRender/index.help.md";
-import ThreeDimensionalVizHelp from "./ThreeDimensionalViz/index.help.md";
-import threeDimensionalVizThumbnail from "./ThreeDimensionalViz/thumbnail.png";
-import TopicGraphHelp from "./TopicGraph/index.help.md";
+import threeDeeRenderThumbnail from "./ThreeDeeRender/thumbnail.png";
 import topicGraphThumbnail from "./TopicGraph/thumbnail.png";
-import URDFViewerHelp from "./URDFViewer/index.help.md";
-import URDFViewerThumbnail from "./URDFViewer/thumbnail.png";
-import VariableSliderHelp from "./VariableSlider/index.help.md";
 import variableSliderThumbnail from "./VariableSlider/thumbnail.png";
-import DiagnosticStatusPanelHelp from "./diagnostics/DiagnosticStatusPanel.help.md";
-import DiagnosticSummaryHelp from "./diagnostics/DiagnosticSummary.help.md";
 import diagnosticStatusThumbnail from "./diagnostics/thumbnails/diagnostic-status.png";
 import diagnosticSummaryThumbnail from "./diagnostics/thumbnails/diagnostic-summary.png";
 
-const builtin: PanelInfo[] = [
+export const getBuiltin: (t: TFunction<"panels">) => PanelInfo[] = (t) => [
   {
-    title: "3D",
-    type: "3D Panel",
-    description: "Display visualization markers and models in a 3D scene.",
-    help: ThreeDimensionalVizHelp,
-    thumbnail: threeDimensionalVizThumbnail,
-    module: async () => await import("./ThreeDimensionalViz"),
+    title: t("3D"),
+    type: "3D",
+    description: t("3DPanelDescription"),
+    thumbnail: threeDeeRenderThumbnail,
+    module: async () => await import("./ThreeDeeRender"),
   },
   {
-    title: `Diagnostics – Detail (ROS)`,
+    title: t("ROSDiagnosticsDetail"),
     type: "DiagnosticStatusPanel",
-    description: "Display ROS DiagnosticArray messages for a specific hardware_id.",
-    help: DiagnosticStatusPanelHelp,
+    description: t("ROSDiagnosticsDetailDescription"),
     thumbnail: diagnosticStatusThumbnail,
     module: async () => await import("./diagnostics/DiagnosticStatusPanel"),
+    hasCustomToolbar: true,
   },
   {
-    title: `Diagnostics – Summary (ROS)`,
+    title: t("ROSDiagnosticSummary"),
     type: "DiagnosticSummary",
-    description: "Display a summary of all ROS DiagnosticArray messages.",
-    help: DiagnosticSummaryHelp,
+    description: t("ROSDiagnosticSummaryDescription"),
     thumbnail: diagnosticSummaryThumbnail,
     module: async () => await import("./diagnostics/DiagnosticSummary"),
+    hasCustomToolbar: true,
   },
   {
-    title: "Image",
-    type: "ImageViewPanel",
-    description: "Display annotated images.",
-    help: ImageViewHelp,
-    thumbnail: imageViewThumbnail,
+    title: t("image"),
+    type: "Image",
+    description: t("imageDescription"),
+    thumbnail: imageThumbnail,
     module: async () => await import("./Image"),
   },
   {
-    title: "Teleop",
+    title: t("indicator"),
+    type: "Indicator",
+    description: t("indicatorDescription"),
+    thumbnail: indicatorThumbnail,
+    module: async () => await import("./Indicator"),
+  },
+  {
+    title: t("gauge"),
+    type: "Gauge",
+    description: t("gaugeDescription"),
+    thumbnail: gaugeThumbnail,
+    module: async () => await import("./Gauge"),
+  },
+  {
+    title: t("teleop"),
     type: "Teleop",
-    description: "Teleoperate a robot over a live connection.",
-    help: TeleopHelp,
+    description: t("teleopDescription"),
     thumbnail: teleopThumbnail,
     module: async () => await import("./Teleop"),
   },
@@ -95,160 +88,114 @@ const builtin: PanelInfo[] = [
     module: async () => await import("./MowerControl"),
   },
   {
-    title: "Map",
+    title: t("map"),
     type: "map",
-    description: "Display points on a map.",
-    help: MapHelp,
+    description: t("mapDescription"),
     thumbnail: mapThumbnail,
     module: async () => await import("./Map"),
   },
   {
-    title: "Parameters",
+    title: t("parameters"),
     type: "Parameters",
-    description: "Read and set parameters for a data source.",
-    help: ParametersHelp,
+    description: t("parametersDescription"),
+    thumbnail: parametersThumbnail,
     module: async () => await import("./Parameters"),
   },
   {
-    title: "Plot",
+    title: t("plot"),
     type: "Plot",
-    description: "Plot numerical values over time or other values.",
-    help: PlotHelp,
+    description: t("plotDescription"),
     thumbnail: plotThumbnail,
     module: async () => await import("./Plot"),
   },
   {
-    title: "Publish",
+    title: t("publish"),
     type: "Publish",
-    description: "Publish messages to the data source (live connections only).",
-    help: PublishHelp,
+    description: t("publishDescription"),
     thumbnail: publishThumbnail,
     module: async () => await import("./Publish"),
   },
   {
-    title: "Raw Messages",
+    title: t("callService"),
+    type: "CallService",
+    description: t("callServiceDescription"),
+    thumbnail: publishThumbnail,
+    module: async () => await import("./CallService"),
+  },
+  {
+    title: t("rawMessages"),
     type: "RawMessages",
-    description: "Inspect topic messages.",
-    help: RawMessagesHelp,
+    description: t("rawMessagesDescription"),
     thumbnail: rawMessagesThumbnail,
     module: async () => await import("./RawMessages"),
+    hasCustomToolbar: true,
   },
   {
-    title: "Log",
+    title: t("log"),
     type: "RosOut",
-    description: "Display logs by node and severity level.",
-    help: LogHelp,
+    description: t("logDescription"),
     thumbnail: logThumbnail,
     module: async () => await import("./Log"),
+    hasCustomToolbar: true,
   },
   {
-    title: "State Transitions",
+    title: t("stateTransitions"),
     type: "StateTransitions",
-    description: "Track when values change over time.",
-    help: StateTransitionsHelp,
+    description: t("stateTransitionsDescription"),
     thumbnail: stateTransitionsThumbnail,
     module: async () => await import("./StateTransitions"),
   },
   {
-    title: "Table",
+    title: t("table"),
     type: "Table",
-    description: "Display topic messages in a tabular format.",
-    help: TableHelp,
+    description: t("tableDescription"),
     thumbnail: tableThumbnail,
     module: async () => await import("./Table"),
+    hasCustomToolbar: true,
   },
   {
-    title: "URDF Viewer",
-    type: "URDFViewer",
-    description: "Visualize Unified Robot Description Format files.",
-    help: URDFViewerHelp,
-    thumbnail: URDFViewerThumbnail,
-    module: async () => await import("./URDFViewer"),
-  },
-  {
-    title: "Topic Graph",
+    title: t("topicGraph"),
     type: "TopicGraph",
-    description: "Display a graph of active nodes, topics, and services.",
-    help: TopicGraphHelp,
+    description: t("topicGraphDescription"),
     thumbnail: topicGraphThumbnail,
     module: async () => await import("./TopicGraph"),
   },
   {
-    title: "Data Source Info",
+    title: t("dataSourceInfo"),
     type: "SourceInfo",
-    description: "View details like topics and timestamps for the current data source.",
-    help: DataSourceInfoHelp,
+    description: t("dataSourceInfoDescription"),
     thumbnail: dataSourceInfoThumbnail,
     module: async () => await import("./DataSourceInfo"),
   },
   {
-    title: "Variable Slider",
+    title: t("variableSlider"),
     type: "GlobalVariableSliderPanel",
-    description: "Update numerical variable values for a layout.",
-    help: VariableSliderHelp,
+    description: t("variableSliderDescription"),
     thumbnail: variableSliderThumbnail,
     module: async () => await import("./VariableSlider"),
   },
   {
-    title: "Node Playground",
+    title: t("userScripts"),
     type: "NodePlayground",
-    description: "Write custom data transformations in TypeScript.",
-    help: NodePlaygroundHelp,
+    description: t("userScriptsDescription"),
     thumbnail: nodePlaygroundThumbnail,
     module: async () => await import("./NodePlayground"),
   },
   {
-    title: "Tab",
+    title: t("tab"),
     type: TAB_PANEL_TYPE,
-    description: "Group related panels into tabs.",
-    help: TabHelp,
+    description: t("tabDescription"),
     thumbnail: tabThumbnail,
     module: async () => await import("./Tab"),
+    hasCustomToolbar: true,
   },
 ];
 
-const debug: PanelInfo[] = [
+export const getDebug: (t: TFunction<"panels">) => PanelInfo[] = (t) => [
   {
-    title: "Studio - Playback Performance",
+    title: t("studioPlaybackPerformance"),
     type: "PlaybackPerformance",
-    description: "Display playback and data-streaming performance statistics.",
-    help: PlaybackPerformanceHelp,
+    description: t("studioPlaybackPerformanceDescription"),
     module: async () => await import("./PlaybackPerformance"),
   },
-  {
-    title: "Studio - Logs",
-    type: "InternalLogs",
-    description: "Specify the channels of internal logs to display for debugging.",
-    help: InternalLogsHelp,
-    module: async () => await import("./InternalLogs"),
-  },
 ];
-
-const hidden: PanelInfo[] = [
-  {
-    title: "Welcome",
-    type: "onboarding.welcome",
-    module: async () => await import("./WelcomePanel"),
-  },
-];
-
-const legacyPlot: PanelInfo[] = [
-  {
-    title: "Legacy Plot",
-    type: "LegacyPlot",
-    module: async () => await import("./LegacyPlot"),
-  },
-];
-
-const new3DPanel: PanelInfo[] = [
-  {
-    title: "3D (Experimental)",
-    type: "3D",
-    description: "Experimental 3D scene renderer.",
-    help: ThreeDeeRenderHelp,
-    thumbnail: threeDimensionalVizThumbnail,
-    module: async () => await import("./ThreeDeeRender"),
-  },
-];
-
-export default { builtin, debug, hidden, legacyPlot, new3DPanel };

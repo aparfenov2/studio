@@ -12,16 +12,16 @@
 //   You may not use this file except in compliance with the License.
 
 import fuzzySort from "fuzzysort";
-import styled from "styled-components";
+import { makeStyles } from "tss-react/mui";
 
-import { colors } from "@foxglove/studio-base/util/sharedStyleConstants";
-
-const STextHighlight = styled.span`
-  .TextHighlight-highlight {
-    color: ${colors.PURPLE};
-    font-weight: bold;
-  }
-`;
+const useStyles = makeStyles()((theme) => ({
+  root: {
+    ".TextHighlight-highlight": {
+      color: theme.palette.primary.main,
+      fontWeight: "bold",
+    },
+  },
+}));
 
 type Props = {
   targetStr: string;
@@ -29,22 +29,24 @@ type Props = {
 };
 
 export default function TextHighlight({ targetStr = "", searchText = "" }: Props): JSX.Element {
+  const { classes } = useStyles();
+
   if (searchText.length === 0) {
     return <>{targetStr}</>;
   }
-  const result = fuzzySort.highlight(
-    fuzzySort.single(searchText, targetStr) ?? undefined,
-    "<span class='TextHighlight-highlight'>",
-    "</span>",
-  );
-  // TODO(Audrey): compute highlighted parts separately in order to avoid dangerouslySetInnerHTML
+
+  const match = fuzzySort.single(searchText, targetStr);
+  const result = match
+    ? fuzzySort.highlight(match, "<span class='TextHighlight-highlight'>", "</span>")
+    : undefined;
+
   return (
-    <STextHighlight>
+    <span className={classes.root}>
       {result != undefined && result.length > 0 ? (
         <span dangerouslySetInnerHTML={{ __html: result }} />
       ) : (
         targetStr
       )}
-    </STextHighlight>
+    </span>
   );
 }

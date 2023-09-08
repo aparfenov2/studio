@@ -3,11 +3,12 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import MoreVertIcon from "@mui/icons-material/MoreVert";
-import { Menu, MenuItem, IconButton, ListItemIcon, ListItemText } from "@mui/material";
+import { Menu, MenuItem, IconButton, ListItemIcon, ListItemText, Divider } from "@mui/material";
 import { useState } from "react";
 
-import icons from "./icons";
-import { SettingsTreeNodeAction } from "./types";
+import { SettingsTreeNodeAction } from "@foxglove/studio";
+
+import { icons } from "./icons";
 
 export function NodeActionsMenu({
   actions,
@@ -28,15 +29,17 @@ export function NodeActionsMenu({
     setAnchorEl(undefined);
   };
 
+  const anyItemHasIcon = actions.some((action) => action.type === "action" && action.icon);
+
   return (
     <>
       <IconButton
         title="More actions"
-        id="node-actions-button"
-        aria-controls={open ? "noce-actions-menu" : undefined}
+        aria-controls={open ? "node-actions-menu" : undefined}
         aria-haspopup="true"
         aria-expanded={open ? "true" : undefined}
         onClick={handleClick}
+        data-testid="node-actions-menu-button"
         size="small"
       >
         <MoreVertIcon fontSize="small" />
@@ -45,21 +48,36 @@ export function NodeActionsMenu({
         id="basic-menu"
         anchorEl={anchorEl}
         open={open}
-        onClose={handleClose}
+        onClose={() => {
+          setAnchorEl(undefined);
+        }}
         MenuListProps={{
-          "aria-labelledby": "node-actions-button",
+          "aria-label": "node actions button",
+          dense: true,
         }}
       >
-        {actions.map((action) => {
+        {actions.map((action, index) => {
+          if (action.type === "divider") {
+            return (
+              <Divider variant={anyItemHasIcon ? "inset" : "fullWidth"} key={`divider_${index}`} />
+            );
+          }
           const Icon = action.icon ? icons[action.icon] : undefined;
           return (
-            <MenuItem key={action.id} onClick={() => handleClose(action.id)}>
+            <MenuItem
+              key={action.id}
+              onClick={() => {
+                handleClose(action.id);
+              }}
+            >
               {Icon && (
                 <ListItemIcon>
                   <Icon fontSize="small" />
                 </ListItemIcon>
               )}
-              <ListItemText>{action.label}</ListItemText>
+              <ListItemText inset={!Icon && anyItemHasIcon} disableTypography>
+                {action.label}
+              </ListItemText>
             </MenuItem>
           );
         })}

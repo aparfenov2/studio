@@ -8,22 +8,28 @@
 /// <reference types="chartjs-plugin-datalabels" />
 /// <reference types="@foxglove/chartjs-plugin-zoom" />
 
-import { ChartOptions, ChartData as ChartJsChartData, ScatterDataPoint } from "chart.js";
+import { ChartOptions } from "chart.js";
 import Hammer from "hammerjs";
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
-import { useAsync, useMountedState } from "react-use";
+import { useMountedState } from "react-use";
+import { assert } from "ts-essentials";
 import { v4 as uuidv4 } from "uuid";
 
+import { type ZoomPluginOptions } from "@foxglove/chartjs-plugin-zoom/types/options";
 import Logger from "@foxglove/log";
-import { RpcElement, RpcScales } from "@foxglove/studio-base/components/Chart/types";
-import ChartJsMux from "@foxglove/studio-base/components/Chart/worker/ChartJsMux";
+import ChartJsMux, {
+  ChartUpdateMessage,
+} from "@foxglove/studio-base/components/Chart/worker/ChartJsMux";
 import Rpc, { createLinkedChannels } from "@foxglove/studio-base/util/Rpc";
 import WebWorkerManager from "@foxglove/studio-base/util/WebWorkerManager";
 import { mightActuallyBePartial } from "@foxglove/studio-base/util/mightActuallyBePartial";
 
+import { TypedChartData, ChartData, RpcElement, RpcScales } from "./types";
+
 const log = Logger.getLogger(__filename);
 
 function makeChartJSWorker() {
+  // foxglove-depcheck-used: babel-plugin-transform-import-meta
   return new Worker(new URL("./worker/main", import.meta.url));
 }
 
@@ -35,15 +41,12 @@ export type OnClickArg = {
   y: number | undefined;
 };
 
-// Chartjs typings use _null_ to indicate _gaps_ in the dataset
-// eslint-disable-next-line no-restricted-syntax
-const ChartNull = null;
-export type ChartData = ChartJsChartData<"scatter", (ScatterDataPoint | typeof ChartNull)[]>;
-
 type Props = {
-  data: ChartData;
+  data?: ChartData;
+  typedData?: TypedChartData;
   options: ChartOptions;
-  type: string;
+  isBoundsReset: boolean;
+  type: "scatter";
   height: number;
   width: number;
   onClick?: (params: OnClickArg) => void;
@@ -67,7 +70,7 @@ const devicePixelRatio = mightActuallyBePartial(window).devicePixelRatio ?? 1;
 const webWorkerManager = new WebWorkerManager(makeChartJSWorker, 4);
 
 // turn a React.MouseEvent into an object we can send over rpc
-function rpcMouseEvent(event: React.MouseEvent<HTMLCanvasElement>) {
+function rpcMouseEvent(event: React.MouseEvent<HTMLElement>) {
   const boundingRect = event.currentTarget.getBoundingClientRect();
 
   return {
@@ -83,7 +86,7 @@ function rpcMouseEvent(event: React.MouseEvent<HTMLCanvasElement>) {
 type RpcSend = <T>(
   topic: string,
   payload?: Record<string, unknown>,
-  transferables?: (Transferable | OffscreenCanvas)[],
+  transferables?: Transferable[],
 ) => Promise<T>;
 
 // Chart component renders data using workers with chartjs offscreen canvas
@@ -95,30 +98,39 @@ function Chart(props: Props): JSX.Element {
   const [id] = useState(() => uuidv4());
 
   const initialized = useRef(false);
-  const canvasRef = useRef<HTMLCanvasElement>(ReactNull);
+  const canvasRef = useRef<HTMLCanvasElement>();
+  const containerRef = useRef<HTMLDivElement>(ReactNull);
   const isMounted = useMountedState();
 
   // to avoid changing useCallback deps for callbacks which access the scale value
   // at the time they are invoked
   const currentScalesRef = useRef<RpcScales | undefined>();
 
-  const zoomEnabled = props.options.plugins?.zoom?.zoom?.enabled ?? false;
-  const panEnabled = props.options.plugins?.zoom?.pan?.enabled ?? false;
+  const zoomEnabled =
+    (props.options.plugins?.zoom as ZoomPluginOptions | undefined)?.zoom?.enabled ?? false;
+  const panEnabled =
+    (props.options.plugins?.zoom as ZoomPluginOptions | undefined)?.pan?.enabled ?? false;
 
-  const { type, data, options, width, height, onStartRender, onFinishRender } = props;
+  const {
+    type,
+    data,
+    typedData,
+    isBoundsReset,
+    options,
+    width,
+    height,
+    onStartRender,
+    onFinishRender,
+  } = props;
 
   const sendWrapperRef = useRef<RpcSend | undefined>();
   const rpcSendRef = useRef<RpcSend | undefined>();
 
-  useLayoutEffect(() => {
-    if (initialized.current) {
-      if (process.env.NODE_ENV === "development") {
-        throw new Error("Chart does not support hot-reloading - please reload the panel");
-      } else {
-        throw new Error("Chart has re-initialized unexpectedly");
-      }
-    }
+  const hasPannedSinceMouseDown = useRef(false);
+  const queuedUpdates = useRef<Partial<ChartUpdateMessage>[]>([]);
+  const previousUpdateMessage = useRef<Record<string, unknown>>({});
 
+  useLayoutEffect(() => {
     log.info(`Register Chart ${id}`);
     let rpc: Rpc;
     if (supportsOffscreenCanvas) {
@@ -133,7 +145,7 @@ function Chart(props: Props): JSX.Element {
     const sendWrapper = async <T,>(
       topic: string,
       payload?: Record<string, unknown>,
-      transferables?: (Transferable | OffscreenCanvas)[],
+      transferables?: Transferable[],
     ) => {
       return await rpc.send<T>(topic, { id, ...payload }, transferables);
     };
@@ -143,8 +155,13 @@ function Chart(props: Props): JSX.Element {
 
     return () => {
       log.info(`Unregister chart ${id}`);
+      sendWrapper("destroy").catch(() => {}); // may fail if worker is torn down
       rpcSendRef.current = undefined;
-      void sendWrapper("destroy");
+      sendWrapperRef.current = undefined;
+      initialized.current = false;
+      previousUpdateMessage.current = {};
+      canvasRef.current?.remove();
+      canvasRef.current = undefined;
       if (supportsOffscreenCanvas) {
         webWorkerManager.unregisterWorkerListener(id);
       }
@@ -175,9 +192,6 @@ function Chart(props: Props): JSX.Element {
     [isMounted],
   );
 
-  const hasPannedSinceMouseDown = useRef(false);
-  const previousUpdateMessage = useRef<Record<string, unknown>>({});
-
   // getNewUpdateMessage returns an update message for the changed fields from the last
   // call to get an update message
   //
@@ -185,7 +199,7 @@ function Chart(props: Props): JSX.Element {
   // if they are unchanged from a previous initialization or update.
   const getNewUpdateMessage = useCallback(() => {
     const prev = previousUpdateMessage.current;
-    const out: Record<string, unknown> = {};
+    const out: Partial<ChartUpdateMessage> = {};
 
     // NOTE(Roman): I don't know why this happens but when I initialize a chart using some data
     // and width/height of 0. Even when I later send an update for correct width/height the chart
@@ -200,6 +214,9 @@ function Chart(props: Props): JSX.Element {
     if (prev.data !== data) {
       prev.data = out.data = data;
     }
+    if (prev.typedData !== typedData) {
+      prev.typedData = out.typedData = typedData;
+    }
     if (prev.options !== options) {
       prev.options = out.options = options;
     }
@@ -210,80 +227,115 @@ function Chart(props: Props): JSX.Element {
       prev.width = out.width = width;
     }
 
+    out.isBoundsReset = isBoundsReset;
+
     // nothing to update
     if (Object.keys(out).length === 0) {
       return;
     }
 
     return out;
-  }, [data, height, options, width]);
+  }, [data, typedData, height, options, isBoundsReset, width]);
 
-  const { error: updateError } = useAsync(async () => {
-    if (!sendWrapperRef.current) {
-      return;
-    }
+  // Update the chart with a new set of data
+  const updateChart = useCallback(
+    async (update: Partial<ChartUpdateMessage>) => {
+      // first time initialization
+      if (!initialized.current) {
+        assert(canvasRef.current == undefined, "Canvas has already been initialized");
+        assert(containerRef.current, "No container ref");
+        assert(sendWrapperRef.current, "No RPC");
 
-    // first time initialization
-    if (!initialized.current) {
-      const canvas = canvasRef.current;
-      if (!canvas) {
+        const canvas = document.createElement("canvas");
+        canvas.style.width = "100%";
+        canvas.style.height = "100%";
+        canvas.width = update.width ?? 0;
+        canvas.height = update.height ?? 0;
+        containerRef.current.appendChild(canvas);
+
+        canvasRef.current = canvas;
+        initialized.current = true;
+
+        onStartRender?.();
+        const offscreenCanvas =
+          typeof canvas.transferControlToOffscreen === "function"
+            ? canvas.transferControlToOffscreen()
+            : canvas;
+        const scales = await sendWrapperRef.current<RpcScales>(
+          "initialize",
+          {
+            node: offscreenCanvas,
+            type,
+            data: update.data,
+            typedData: update.typedData,
+            options: update.options,
+            devicePixelRatio,
+            width: update.width,
+            height: update.height,
+          },
+          [
+            // If this is actually a HTMLCanvasElement then it will not be transferred because we
+            // don't use a worker
+            offscreenCanvas as OffscreenCanvas,
+          ],
+        );
+
+        // Flush any updates that occurred before the worker was initialized
+        const { current: queued } = queuedUpdates;
+        queuedUpdates.current = [];
+        for (const queuedUpdate of queued) {
+          const newScales = await sendWrapperRef.current<RpcScales>("update", queuedUpdate);
+          maybeUpdateScales(newScales);
+        }
+
+        // once we are initialized, we can allow other handlers to send to the rpc endpoint
+        rpcSendRef.current = sendWrapperRef.current;
+
+        maybeUpdateScales(scales);
+        onFinishRender?.();
         return;
       }
 
-      const newUpdateMessage = getNewUpdateMessage();
-      if (!newUpdateMessage) {
+      if (!rpcSendRef.current) {
+        queuedUpdates.current = [...queuedUpdates.current, update];
         return;
       }
-
-      initialized.current = true;
 
       onStartRender?.();
-      const offscreenCanvas =
-        "transferControlToOffscreen" in canvas ? canvas.transferControlToOffscreen() : canvas;
-      const scales = await sendWrapperRef.current<RpcScales>(
-        "initialize",
-        {
-          node: offscreenCanvas,
-          type,
-          data: newUpdateMessage.data,
-          options: newUpdateMessage.options,
-          devicePixelRatio,
-          width: newUpdateMessage.width,
-          height: newUpdateMessage.height,
-        },
-        [offscreenCanvas],
-      );
-
-      // once we are initialized, we can allow other handlers to send to the rpc endpoint
-      rpcSendRef.current = sendWrapperRef.current;
-
+      const scales = await rpcSendRef.current<RpcScales>("update", update);
       maybeUpdateScales(scales);
       onFinishRender?.();
+    },
+    [maybeUpdateScales, onFinishRender, onStartRender, type],
+  );
+
+  const [updateError, setUpdateError] = useState<Error | undefined>();
+  useLayoutEffect(() => {
+    if (!containerRef.current) {
       return;
     }
 
-    if (!rpcSendRef.current) {
+    setUpdateError(undefined);
+
+    const newUpdate = getNewUpdateMessage();
+    if (!newUpdate) {
       return;
     }
 
-    const newUpdateMessage = getNewUpdateMessage();
-    if (!newUpdateMessage) {
-      return;
-    }
-
-    onStartRender?.();
-    const scales = await rpcSendRef.current<RpcScales>("update", newUpdateMessage);
-    maybeUpdateScales(scales);
-    onFinishRender?.();
-  }, [getNewUpdateMessage, maybeUpdateScales, onFinishRender, onStartRender, type]);
+    updateChart(newUpdate).catch((err: Error) => {
+      if (isMounted()) {
+        setUpdateError(err);
+      }
+    });
+  }, [getNewUpdateMessage, isMounted, updateChart]);
 
   useLayoutEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas || !panEnabled) {
+    const container = containerRef.current;
+    if (!container || !panEnabled) {
       return;
     }
 
-    const hammerManager = new Hammer.Manager(canvas);
+    const hammerManager = new Hammer.Manager(container);
     const threshold = props.options.plugins?.zoom?.pan?.threshold ?? 10;
     hammerManager.add(new Hammer.Pan({ threshold }));
 
@@ -355,7 +407,7 @@ function Chart(props: Props): JSX.Element {
   }, [maybeUpdateScales, panEnabled, props.options.plugins?.zoom?.pan?.threshold]);
 
   const onWheel = useCallback(
-    async (event: React.WheelEvent<HTMLCanvasElement>) => {
+    async (event: React.WheelEvent<HTMLElement>) => {
       if (!zoomEnabled || !rpcSendRef.current) {
         return;
       }
@@ -379,7 +431,7 @@ function Chart(props: Props): JSX.Element {
   );
 
   const onMouseDown = useCallback(
-    async (event: React.MouseEvent<HTMLCanvasElement>) => {
+    async (event: React.MouseEvent<HTMLElement>) => {
       hasPannedSinceMouseDown.current = false;
 
       if (!rpcSendRef.current) {
@@ -395,7 +447,7 @@ function Chart(props: Props): JSX.Element {
     [maybeUpdateScales],
   );
 
-  const onMouseUp = useCallback(async (event: React.MouseEvent<HTMLCanvasElement>) => {
+  const onMouseUp = useCallback(async (event: React.MouseEvent<HTMLElement>) => {
     if (!rpcSendRef.current) {
       return;
     }
@@ -412,7 +464,7 @@ function Chart(props: Props): JSX.Element {
 
   const { onHover } = props;
   const onMouseMove = useCallback(
-    async (event: React.MouseEvent<HTMLCanvasElement>) => {
+    async (event: React.MouseEvent<HTMLElement>) => {
       mousePresentRef.current = true; // The mouse must be present if we're getting this event.
 
       if (onHover == undefined || rpcSendRef.current == undefined) {
@@ -443,7 +495,7 @@ function Chart(props: Props): JSX.Element {
   }, [onHover]);
 
   const onClick = useCallback(
-    async (event: React.MouseEvent<HTMLCanvasElement>): Promise<void> => {
+    async (event: React.MouseEvent<HTMLElement>): Promise<void> => {
       if (
         !props.onClick ||
         !rpcSendRef.current ||
@@ -494,10 +546,8 @@ function Chart(props: Props): JSX.Element {
   }
 
   return (
-    <canvas
-      ref={canvasRef}
-      height={height}
-      width={width}
+    <div
+      ref={containerRef}
       onWheel={onWheel}
       onClick={onClick}
       onMouseDown={onMouseDown}
@@ -505,7 +555,7 @@ function Chart(props: Props): JSX.Element {
       onMouseLeave={onMouseLeave}
       onMouseEnter={onMouseEnter}
       onMouseUp={onMouseUp}
-      style={{ width, height, cursor: "crosshair" }}
+      style={{ width, height, cursor: "crosshair", position: "relative" }}
     />
   );
 }

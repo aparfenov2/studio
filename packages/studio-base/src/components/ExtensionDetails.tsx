@@ -3,49 +3,54 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
-import {
-  IconButton,
-  Button,
-  Link,
-  Tab,
-  Tabs,
-  Typography,
-  Divider,
-  styled as muiStyled,
-} from "@mui/material";
+import { Button, Link, Tab, Tabs, Typography, Divider } from "@mui/material";
+import { useSnackbar } from "notistack";
 import { useCallback, useState } from "react";
-import { useToasts } from "react-toast-notifications";
 import { useAsync, useMountedState } from "react-use";
+import { makeStyles } from "tss-react/mui";
 
-import { SidebarContent } from "@foxglove/studio-base/components/SidebarContent";
+import { Immutable } from "@foxglove/studio";
 import Stack from "@foxglove/studio-base/components/Stack";
 import TextContent from "@foxglove/studio-base/components/TextContent";
 import { useAnalytics } from "@foxglove/studio-base/context/AnalyticsContext";
-import { useExtensionLoader } from "@foxglove/studio-base/context/ExtensionLoaderContext";
+import { useExtensionCatalog } from "@foxglove/studio-base/context/ExtensionCatalogContext";
 import {
   ExtensionMarketplaceDetail,
   useExtensionMarketplace,
 } from "@foxglove/studio-base/context/ExtensionMarketplaceContext";
 import { AppEvent } from "@foxglove/studio-base/services/IAnalytics";
+import isDesktopApp from "@foxglove/studio-base/util/isDesktopApp";
 
 type Props = {
   installed: boolean;
-  extension: ExtensionMarketplaceDetail;
+  extension: Immutable<ExtensionMarketplaceDetail>;
   onClose: () => void;
 };
 
-const StyledButton = muiStyled(Button)({ minWidth: 100 });
+const useStyles = makeStyles()((theme) => ({
+  backButton: {
+    marginLeft: theme.spacing(-1.5),
+    marginBottom: theme.spacing(1),
+  },
+  installButton: {
+    minWidth: 100,
+  },
+}));
 
 export function ExtensionDetails({ extension, onClose, installed }: Props): React.ReactElement {
+  const { classes } = useStyles();
   const [isInstalled, setIsInstalled] = useState(installed);
   const [activeTab, setActiveTab] = useState<number>(0);
   const isMounted = useMountedState();
-  const extensionLoader = useExtensionLoader();
+  const downloadExtension = useExtensionCatalog((state) => state.downloadExtension);
+  const installExtension = useExtensionCatalog((state) => state.installExtension);
+  const uninstallExtension = useExtensionCatalog((state) => state.uninstallExtension);
   const marketplace = useExtensionMarketplace();
-  const { addToast } = useToasts();
+  const { enqueueSnackbar } = useSnackbar();
   const readmeUrl = extension.readme;
   const changelogUrl = extension.changelog;
   const canInstall = extension.foxe != undefined;
+  const canUninstall = extension.namespace !== "org";
 
   const { value: readmeContent } = useAsync(
     async () => (readmeUrl != undefined ? await marketplace.getMarkdown(readmeUrl) : ""),
@@ -59,46 +64,73 @@ export function ExtensionDetails({ extension, onClose, installed }: Props): Reac
   const analytics = useAnalytics();
 
   const install = useCallback(async () => {
+    if (!isDesktopApp()) {
+      enqueueSnackbar("Download the desktop app to use marketplace extensions.", {
+        variant: "error",
+      });
+      return;
+    }
+
     const url = extension.foxe;
     try {
       if (url == undefined) {
         throw new Error(`Cannot install extension ${extension.id}, "foxe" URL is missing`);
       }
-      const data = await extensionLoader.downloadExtension(url);
-      await extensionLoader.installExtension(data);
+      const data = await downloadExtension(url);
+      await installExtension("local", data);
       if (isMounted()) {
         setIsInstalled(true);
         void analytics.logEvent(AppEvent.EXTENSION_INSTALL, { type: extension.id });
       }
     } catch (err) {
-      addToast(`Failed to download extension ${extension.id}. ${err.message}`, {
-        appearance: "error",
+      enqueueSnackbar(`Failed to download extension ${extension.id}. ${err.message}`, {
+        variant: "error",
       });
     }
-  }, [analytics, extension.id, extension.foxe, extensionLoader, isMounted, addToast]);
+  }, [
+    analytics,
+    downloadExtension,
+    enqueueSnackbar,
+    extension.foxe,
+    extension.id,
+    installExtension,
+    isMounted,
+  ]);
 
   const uninstall = useCallback(async () => {
-    await extensionLoader.uninstallExtension(extension.id);
+    await uninstallExtension(extension.namespace ?? "local", extension.id);
     if (isMounted()) {
       setIsInstalled(false);
       void analytics.logEvent(AppEvent.EXTENSION_UNINSTALL, { type: extension.id });
     }
-  }, [analytics, extension.id, extensionLoader, isMounted]);
+  }, [analytics, extension.id, extension.namespace, isMounted, uninstallExtension]);
 
   return (
-    <SidebarContent
-      title={extension.name}
-      leadingItems={[
-        // eslint-disable-next-line react/jsx-key
-        <IconButton onClick={onClose} color="primary" edge="start">
-          <ChevronLeftIcon />
-        </IconButton>,
-      ]}
-    >
+    <Stack fullHeight flex="auto" gap={1}>
+      <div>
+        <Button
+          className={classes.backButton}
+          onClick={onClose}
+          size="small"
+          startIcon={<ChevronLeftIcon />}
+        >
+          Back
+        </Button>
+        <Typography variant="h3" fontWeight={500}>
+          {extension.name}
+        </Typography>
+      </div>
+
       <Stack gap={1} alignItems="flex-start">
         <Stack gap={0.5} paddingBottom={1}>
           <Stack direction="row" gap={1} alignItems="baseline">
-            <Link variant="body2" color="primary" href={extension.homepage} underline="hover">
+            <Link
+              variant="body2"
+              color="primary"
+              href={extension.homepage}
+              target="_blank"
+              underline="hover"
+            >
               {extension.id}
             </Link>
             <Typography
@@ -116,8 +148,9 @@ export function ExtensionDetails({ extension, onClose, installed }: Props): Reac
             {extension.description}
           </Typography>
         </Stack>
-        {isInstalled ? (
-          <StyledButton
+        {isInstalled && canUninstall ? (
+          <Button
+            className={classes.installButton}
             size="small"
             key="uninstall"
             color="inherit"
@@ -125,10 +158,11 @@ export function ExtensionDetails({ extension, onClose, installed }: Props): Reac
             onClick={uninstall}
           >
             Uninstall
-          </StyledButton>
+          </Button>
         ) : (
           canInstall && (
-            <StyledButton
+            <Button
+              className={classes.installButton}
               size="small"
               key="install"
               color="inherit"
@@ -136,7 +170,7 @@ export function ExtensionDetails({ extension, onClose, installed }: Props): Reac
               onClick={install}
             >
               Install
-            </StyledButton>
+            </Button>
           )
         )}
       </Stack>
@@ -145,7 +179,9 @@ export function ExtensionDetails({ extension, onClose, installed }: Props): Reac
         <Tabs
           textColor="inherit"
           value={activeTab}
-          onChange={(_event, newValue: number) => setActiveTab(newValue)}
+          onChange={(_event, newValue: number) => {
+            setActiveTab(newValue);
+          }}
         >
           <Tab disableRipple label="README" value={0} />
           <Tab disableRipple label="CHANGELOG" value={1} />
@@ -157,6 +193,6 @@ export function ExtensionDetails({ extension, onClose, installed }: Props): Reac
         {activeTab === 0 && <TextContent>{readmeContent}</TextContent>}
         {activeTab === 1 && <TextContent>{changelogContent}</TextContent>}
       </Stack>
-    </SidebarContent>
+    </Stack>
   );
 }

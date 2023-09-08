@@ -37,7 +37,6 @@ const createProperty = (name: string | ts.PropertyName, type: ts.TypeNode) => {
 
 const createTimeInterfaceDeclaration = (name: string) => {
   return ts.factory.createInterfaceDeclaration(
-    undefined /* decorators */,
     modifiers /* modifiers */,
     name /* name */,
     undefined /* typeParameters */,
@@ -50,10 +49,7 @@ const createTimeInterfaceDeclaration = (name: string) => {
 };
 
 // Since rosbagjs treats json as a primitive, we have to shim it in.
-// TODO: Update json declaration in a smarter way.
 const jsonInterfaceDeclaration = ts.factory.createInterfaceDeclaration(
-  undefined,
-  /* decorators */
   modifiers,
   /* modifiers */
   "json",
@@ -117,7 +113,6 @@ export const generateTypeDefs = (datatypes: RosDatatypes): InterfaceDeclarations
       const rosPrimitive = rosPrimitivesToTypeScriptMap.get(type);
       const rosSpecial = rosSpecialTypesToTypescriptMap.get(type);
       if (isConstant === true) {
-        // TODO: Support ROS constants at some point.
         return undefined;
       } else if (isArray === true && typedArray != undefined) {
         node = ts.factory.createTypeReferenceNode(typedArray);
@@ -136,7 +131,6 @@ export const generateTypeDefs = (datatypes: RosDatatypes): InterfaceDeclarations
     });
 
     interfaceDeclarations[datatype] = ts.factory.createInterfaceDeclaration(
-      undefined /* decorators */,
       [ts.factory.createModifier(ts.SyntaxKind.ExportKeyword)] /* modifiers */,
       formatInterfaceName(datatype) /* name */,
       undefined /* typeParameters */,
@@ -157,7 +151,6 @@ const generateRosLib = ({
   datatypes: RosDatatypes;
 }): string => {
   let TopicsToMessageDefinition = ts.factory.createInterfaceDeclaration(
-    undefined,
     modifiers,
     "TopicsToMessageDefinition",
     undefined,
@@ -166,14 +159,13 @@ const generateRosLib = ({
   );
 
   const typedMessage = ts.factory.createInterfaceDeclaration(
-    undefined,
-    /* decorators */
     modifiers,
     /* modifiers */
     "Input",
     /* name */
     [
       ts.factory.createTypeParameterDeclaration(
+        [],
         "T",
         ts.factory.createTypeOperatorNode(
           ts.SyntaxKind.KeyOfKeyword,
@@ -196,19 +188,20 @@ const generateRosLib = ({
 
   let datatypeInterfaces = generateTypeDefs(datatypes);
 
-  topics.forEach(({ name, datatype }) => {
-    if (!datatypeInterfaces[datatype]) {
+  topics.forEach(({ name, schemaName }) => {
+    if (schemaName == undefined) {
+      return;
+    }
+    if (!datatypeInterfaces[schemaName]) {
       datatypeInterfaces = {
         ...datatypeInterfaces,
-        ...generateTypeDefs(new Map(Object.entries({ [datatype]: { definitions: [] } }))),
+        ...generateTypeDefs(new Map(Object.entries({ [schemaName]: { definitions: [] } }))),
       };
     }
 
     TopicsToMessageDefinition = ts.factory.updateInterfaceDeclaration(
       TopicsToMessageDefinition,
       /* node */
-      undefined,
-      /* decorators */
       modifiers,
       /* modifiers */
       TopicsToMessageDefinition.name,
@@ -221,7 +214,7 @@ const generateRosLib = ({
         createProperty(
           ts.factory.createStringLiteral(name),
           ts.factory.createTypeReferenceNode(
-            `${DATATYPES_IDENTIFIER}.${formatInterfaceName(datatype)}`,
+            `${DATATYPES_IDENTIFIER}.${formatInterfaceName(schemaName)}`,
           ),
         ),
       ],
@@ -230,8 +223,6 @@ const generateRosLib = ({
   });
 
   const datatypesNamespace = ts.factory.createModuleDeclaration(
-    undefined,
-    /* decorators */
     modifiers,
     /* modifiers */
     ts.factory.createIdentifier(DATATYPES_IDENTIFIER),
@@ -277,8 +268,8 @@ const generateRosLib = ({
      * Input<"/your_input_topic_2">'.
      *
      * These types are dynamically generated from the bag(s) currently in your
-     * Foxglove Studio session, so if a datatype changes, your Node Playground
-     * node may not compile on the newly formatted bag.
+     * Foxglove Studio session, so if a datatype changes, your User Script
+     * may not compile on the newly formatted bag.
      */
     ${printer.printNode(ts.EmitHint.Unspecified, typedMessage, sourceFile)}
   `;

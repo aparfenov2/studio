@@ -11,37 +11,30 @@
 //   found at http://www.apache.org/licenses/LICENSE-2.0
 //   You may not use this file except in compliance with the License.
 
-import DatabaseIcon from "@mdi/svg/svg/database.svg";
-import { Autocomplete, Menu, MenuItem, TextField } from "@mui/material";
-import { sortBy, uniq } from "lodash";
-import { useCallback, useMemo, useRef, useState, MouseEvent } from "react";
+import { Autocomplete, TextField } from "@mui/material";
+import { produce } from "immer";
+import { set, sortBy, uniq } from "lodash";
+import { useCallback, useMemo, useEffect } from "react";
 
+import { SettingsTreeAction } from "@foxglove/studio";
 import { useDataSourceInfo } from "@foxglove/studio-base/PanelAPI";
 import EmptyState from "@foxglove/studio-base/components/EmptyState";
 import Panel from "@foxglove/studio-base/components/Panel";
 import { usePanelContext } from "@foxglove/studio-base/components/PanelContext";
 import PanelToolbar from "@foxglove/studio-base/components/PanelToolbar";
-import ToolbarIconButton from "@foxglove/studio-base/components/PanelToolbar/ToolbarIconButton";
 import Stack from "@foxglove/studio-base/components/Stack";
-import { DIAGNOSTIC_TOPIC } from "@foxglove/studio-base/util/globalConstants";
+import { usePanelSettingsTreeUpdate } from "@foxglove/studio-base/providers/PanelStateContextProvider";
+import { SaveConfig } from "@foxglove/studio-base/types/panels";
 
 import DiagnosticStatus from "./DiagnosticStatus";
-import helpContent from "./DiagnosticStatusPanel.help.md";
+import { buildStatusPanelSettingsTree } from "./settings";
 import useAvailableDiagnostics from "./useAvailableDiagnostics";
 import useDiagnostics from "./useDiagnostics";
-import { getDisplayName } from "./util";
-
-export type Config = {
-  selectedHardwareId?: string;
-  selectedName?: string;
-  splitFraction?: number;
-  topicToRender: string;
-  collapsedSections: { name: string; section: string }[];
-};
+import { DiagnosticStatusConfig as Config, getDisplayName } from "./util";
 
 type Props = {
   config: Config;
-  saveConfig: (arg0: Partial<Config>) => void;
+  saveConfig: SaveConfig<Config>;
 };
 
 const ALLOWED_DATATYPES: string[] = [
@@ -55,43 +48,30 @@ function DiagnosticStatusPanel(props: Props) {
   const { saveConfig, config } = props;
   const { topics } = useDataSourceInfo();
   const { openSiblingPanel } = usePanelContext();
-  const {
-    selectedHardwareId,
-    selectedName,
-    splitFraction,
-    topicToRender,
-    collapsedSections = [],
-  } = config;
+  const { selectedHardwareId, selectedName, splitFraction, topicToRender, numericPrecision } =
+    config;
 
-  const menuRef = useRef<HTMLDivElement>(ReactNull);
-  const [topicMenuOpen, setTopicMenuOpen] = useState(false);
+  const updatePanelSettingsTree = usePanelSettingsTreeUpdate();
 
   // Filter down all topics to those that conform to our supported datatypes
   const availableTopics = useMemo(() => {
     const filtered = topics
-      .filter((topic) => ALLOWED_DATATYPES.includes(topic.datatype))
+      .filter(
+        (topic) => topic.schemaName != undefined && ALLOWED_DATATYPES.includes(topic.schemaName),
+      )
       .map((topic) => topic.name);
 
     // Keeps only the first occurrence of each topic.
-    return uniq([DIAGNOSTIC_TOPIC, ...filtered, topicToRender]);
-  }, [topics, topicToRender]);
+    return uniq([...filtered]);
+  }, [topics]);
 
-  const changeTopicToRender = useCallback(
-    (newTopicToRender: string) => {
-      saveConfig({ topicToRender: newTopicToRender });
-      setTopicMenuOpen(false);
-    },
-    [saveConfig],
-  );
+  // If the topicToRender is not in the availableTopics, then we should not try to use it
+  const diagnosticTopic = useMemo(() => {
+    return availableTopics.includes(topicToRender) ? topicToRender : undefined;
+  }, [availableTopics, topicToRender]);
 
-  const toggleTopicMenuAction = useCallback((ev: MouseEvent<HTMLElement>) => {
-    // To accurately position the topic dropdown menu we set the location of our menu ref to the
-    // click location
-    menuRef.current!.style.left = `${ev.clientX}px`;
-    setTopicMenuOpen((isOpen) => !isOpen);
-  }, []);
-
-  const availableDiagnostics = useAvailableDiagnostics(topicToRender);
+  const diagnostics = useDiagnostics(diagnosticTopic);
+  const availableDiagnostics = useAvailableDiagnostics(diagnosticTopic);
 
   // generate Autocomplete entries from the available diagnostics
   const autocompleteOptions = useMemo(() => {
@@ -127,8 +107,6 @@ function DiagnosticStatusPanel(props: Props) {
     );
   }, [autocompleteOptions, selectedDisplayName]);
 
-  const diagnostics = useDiagnostics(topicToRender);
-
   const filteredDiagnostics = useMemo(() => {
     const diagnosticsByName = diagnostics.get(selectedHardwareId ?? "");
     const items = [];
@@ -149,43 +127,28 @@ function DiagnosticStatusPanel(props: Props) {
   const noOptionsText =
     autocompleteOptions.length > 0 ? "No matches" : "Waiting for diagnostics...";
 
+  const actionHandler = useCallback(
+    (action: SettingsTreeAction) => {
+      if (action.action !== "update") {
+        return;
+      }
+
+      const { path, value } = action.payload;
+      saveConfig(produce((draft) => set(draft, path.slice(1), value)));
+    },
+    [saveConfig],
+  );
+
+  useEffect(() => {
+    updatePanelSettingsTree({
+      actionHandler,
+      nodes: buildStatusPanelSettingsTree(topicToRender, numericPrecision, availableTopics),
+    });
+  }, [actionHandler, availableTopics, topicToRender, numericPrecision, updatePanelSettingsTree]);
+
   return (
     <Stack flex="auto" overflow="hidden">
-      <PanelToolbar
-        helpContent={helpContent}
-        additionalIcons={
-          <>
-            <div ref={menuRef}>
-              <ToolbarIconButton
-                title={`Supported datatypes: ${ALLOWED_DATATYPES.join(", ")}`}
-                data-test={"topic-set"}
-                onClick={toggleTopicMenuAction}
-                subMenuActive={topicMenuOpen}
-              >
-                <DatabaseIcon />
-              </ToolbarIconButton>
-            </div>
-            <Menu
-              anchorEl={menuRef.current}
-              open={topicMenuOpen}
-              onClose={() => setTopicMenuOpen(false)}
-              MenuListProps={{
-                dense: true,
-              }}
-            >
-              {availableTopics.map((topic) => (
-                <MenuItem
-                  key={topic}
-                  onClick={() => changeTopicToRender(topic)}
-                  selected={topicToRender === topic}
-                >
-                  {topic}
-                </MenuItem>
-              ))}
-            </Menu>
-          </>
-        }
-      >
+      <PanelToolbar>
         <Autocomplete
           disablePortal
           blurOnSelect={true}
@@ -214,7 +177,7 @@ function DiagnosticStatusPanel(props: Props) {
               variant="standard"
               {...params}
               InputProps={{ ...params.InputProps, disableUnderline: true }}
-              placeholder={selectedDisplayName}
+              placeholder={selectedDisplayName ?? "Filter"}
             />
           )}
         />
@@ -226,13 +189,12 @@ function DiagnosticStatusPanel(props: Props) {
               key={item.id}
               info={item}
               splitFraction={splitFraction}
-              onChangeSplitFraction={(newSplitFraction) =>
-                props.saveConfig({ splitFraction: newSplitFraction })
-              }
+              onChangeSplitFraction={(newSplitFraction) => {
+                props.saveConfig({ splitFraction: newSplitFraction });
+              }}
               topicToRender={topicToRender}
+              numericPrecision={numericPrecision}
               openSiblingPanel={openSiblingPanel}
-              saveConfig={saveConfig}
-              collapsedSections={collapsedSections}
             />
           ))}
         </Stack>
@@ -247,7 +209,7 @@ function DiagnosticStatusPanel(props: Props) {
   );
 }
 
-const defaultConfig: Config = { topicToRender: DIAGNOSTIC_TOPIC, collapsedSections: [] };
+const defaultConfig: Config = { topicToRender: "/diagnostics" };
 
 export default Panel(
   Object.assign(DiagnosticStatusPanel, {

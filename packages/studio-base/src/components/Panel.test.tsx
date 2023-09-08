@@ -12,8 +12,8 @@
 //   found at http://www.apache.org/licenses/LICENSE-2.0
 //   You may not use this file except in compliance with the License.
 
-import { act, renderHook } from "@testing-library/react-hooks";
-import { mount } from "enzyme";
+import { render } from "@testing-library/react";
+import { renderHook, act } from "@testing-library/react-hooks";
 import { useEffect } from "react";
 
 import Panel from "@foxglove/studio-base/components/Panel";
@@ -37,13 +37,22 @@ function getDummyPanel(renderFn: jest.Mock) {
 }
 
 describe("Panel", () => {
+  beforeEach(() => {
+    // jsdom can't parse our @container CSS so we have to silence console.error for this test.
+    jest.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    (console.error as jest.Mock).mockRestore();
+  });
+
   it("saves defaultConfig when there is no saved config", async () => {
     const renderFn = jest.fn();
     const DummyPanel = getDummyPanel(renderFn);
     const childId = "Dummy!1my2ydk";
 
     const actions: PanelsActions[] = [];
-    mount(
+    render(
       <PanelSetup onLayoutAction={(action) => actions.push(action)}>
         <DummyPanel childId={childId} />
       </PanelSetup>,
@@ -71,7 +80,7 @@ describe("Panel", () => {
     const someString = "someNewString";
 
     const actions: PanelsActions[] = [];
-    mount(
+    render(
       <PanelSetup
         fixture={{ savedProps: { [childId]: { someString } } }}
         onLayoutAction={(action) => actions.push(action)}
@@ -99,7 +108,7 @@ describe("Panel", () => {
     const childId = "Dummy!1my2ydk";
 
     const actions: PanelsActions[] = [];
-    mount(
+    render(
       <PanelSetup
         fixture={{ savedProps: { [childId]: { someNumber: 42 } } }}
         onLayoutAction={(action) => actions.push(action)}
@@ -135,7 +144,7 @@ describe("Panel", () => {
     const someString = "someNewString";
 
     const actions: PanelsActions[] = [];
-    mount(
+    render(
       <PanelSetup
         fixture={{ savedProps: { [childId]: { someNumber: 42, someString } } }}
         onLayoutAction={(action) => actions.push(action)}
@@ -175,7 +184,9 @@ describe("Panel", () => {
     });
 
     expect(renderFn.mock.calls.length).toEqual(2);
-    act(() => actions.current.savePanelConfigs({ configs: [{ id: "someOtherId", config: {} }] }));
+    act(() => {
+      actions.current.savePanelConfigs({ configs: [{ id: "someOtherId", config: {} }] });
+    });
     expect(renderFn.mock.calls.length).toEqual(2);
   });
 });

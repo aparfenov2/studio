@@ -2,359 +2,674 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
+import { t } from "i18next";
 import * as THREE from "three";
 import { Line2 } from "three/examples/jsm/lines/Line2";
 import { LineGeometry } from "three/examples/jsm/lines/LineGeometry";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial";
 
-import Logger from "@foxglove/log";
+import {
+  Immutable,
+  SettingsTreeAction,
+  SettingsTreeChildren,
+  SettingsTreeFields,
+} from "@foxglove/studio";
+import type { RosValue } from "@foxglove/studio-base/players/types";
+import { Label } from "@foxglove/three-text";
 
-import { MaterialCache, StandardColor } from "../MaterialCache";
-import { Renderer } from "../Renderer";
-import { arrowHeadSubdivisions, arrowShaftSubdivisions, DetailLevel } from "../lod";
-import { Pose, rosTimeToNanoSec, TF } from "../ros";
-import { LayerSettingsTransform, LayerType } from "../settings";
-import { Transform } from "../transforms/Transform";
-import { makePose } from "../transforms/geometry";
-import { updatePose } from "../updatePose";
-import { linePickingMaterial, releaseLinePickingMaterial } from "./markers/materials";
-import { missingTransformMessage, MISSING_TRANSFORM } from "./transforms";
+import { Axis, AXIS_LENGTH } from "./Axis";
+import { DEFAULT_LABEL_SCALE_FACTOR } from "./SceneSettings";
+import { makeLinePickingMaterial } from "./markers/materials";
+import type { IRenderer, RendererConfig } from "../IRenderer";
+import { BaseUserData, Renderable } from "../Renderable";
+import { SceneExtension } from "../SceneExtension";
+import { SettingsTreeEntry } from "../SettingsManager";
+import { getLuminance, stringToRgb } from "../color";
+import { BaseSettings, fieldSize, PRECISION_DEGREES, PRECISION_DISTANCE } from "../settings";
+import { CoordinateFrame, Duration, makePose, MAX_DURATION, Transform } from "../transforms";
 
-const log = Logger.getLogger(__filename);
-
-const SHAFT_LENGTH = 0.154;
-const SHAFT_DIAMETER = 0.02;
-const HEAD_LENGTH = 0.046;
-const HEAD_DIAMETER = 0.05;
-
-const RED_COLOR = new THREE.Color(0x9c3948).convertSRGBToLinear();
-const GREEN_COLOR = new THREE.Color(0x88dd04).convertSRGBToLinear();
-const BLUE_COLOR = new THREE.Color(0x2b90fb).convertSRGBToLinear();
-const YELLOW_COLOR = new THREE.Color(0xffff00).convertSRGBToLinear();
-
-const PI_2 = Math.PI / 2;
+export type LayerSettingsTransform = BaseSettings & {
+  xyzOffset: Readonly<[number | undefined, number | undefined, number | undefined]>;
+  rpyCoefficient: Readonly<[number | undefined, number | undefined, number | undefined]>;
+};
 
 const PICKING_LINE_SIZE = 6;
+const PI_2 = Math.PI / 2;
+
+const DEFAULT_EDITABLE = false;
+
+const DEFAULT_AXIS_SCALE = 1;
+const DEFAULT_LINE_WIDTH_PX = 2;
+const DEFAULT_LINE_COLOR_STR = "#ffff00";
+const DEFAULT_TF_LABEL_SIZE = 0.2;
 
 const DEFAULT_SETTINGS: LayerSettingsTransform = {
   visible: true,
+  frameLocked: true,
+  xyzOffset: [0, 0, 0],
+  rpyCoefficient: [0, 0, 0],
 };
 
-const tempMat4 = new THREE.Matrix4();
+export type FrameAxisUserData = BaseUserData & {
+  axis: Axis;
+  label: Label;
+  parentLine: Line2;
+};
+
+class FrameAxisRenderable extends Renderable<FrameAxisUserData> {
+  public override dispose(): void {
+    this.renderer.labelPool.release(this.userData.label);
+    super.dispose();
+  }
+
+  public override details(): Record<string, RosValue> {
+    const frame = this.renderer.transformTree.frame(this.userData.frameId);
+    const parent = frame?.parent();
+    const fixed = frame?.root();
+
+    return {
+      child_frame_id: frame?.displayName() ?? "<unknown>",
+      parent_frame_id: parent?.displayName() ?? "<unknown>",
+      fixed_frame_id: fixed?.displayName() ?? "<unknown>",
+    };
+  }
+}
+
 const tempVec = new THREE.Vector3();
 const tempVecB = new THREE.Vector3();
+const tempLower: [Duration, Transform] = [0n, Transform.Identity()];
+const tempUpper: [Duration, Transform] = [0n, Transform.Identity()];
+const tempQuaternion = new THREE.Quaternion();
+const tempEuler = new THREE.Euler();
+const tempTfPath: [string, string] = ["transforms", ""];
 
-type FrameAxisRenderable = THREE.Object3D & {
-  userData: {
-    frameId: string;
-    path: ReadonlyArray<string>;
-    pose: Pose;
-    settings: LayerSettingsTransform;
-    shaftMesh: THREE.InstancedMesh;
-    headMesh: THREE.InstancedMesh;
-    label: THREE.Sprite;
-    parentLine?: Line2;
-  };
-};
+export class FrameAxes extends SceneExtension<FrameAxisRenderable> {
+  #lineMaterial: LineMaterial;
+  #linePickingMaterial: THREE.ShaderMaterial;
 
-export class FrameAxes extends THREE.Object3D {
-  private static shaftLod: DetailLevel | undefined;
-  private static headLod: DetailLevel | undefined;
-  private static shaftGeometry: THREE.CylinderGeometry | undefined;
-  private static headGeometry: THREE.ConeGeometry | undefined;
-  private static lineGeometry: LineGeometry | undefined;
+  #labelForegroundColor = 1;
+  #labelBackgroundColor = new THREE.Color();
+  #lineGeometry: LineGeometry;
+  #defaultRenderableSettings: LayerSettingsTransform;
 
-  renderer: Renderer;
-  axesByFrameId = new Map<string, FrameAxisRenderable>();
-  lineMaterial: LineMaterial;
-  linePickingMaterial: THREE.ShaderMaterial;
+  public constructor(
+    renderer: IRenderer,
+    defaultRenderableSettings: Partial<LayerSettingsTransform>,
+  ) {
+    super("foxglove.FrameAxes", renderer);
 
-  constructor(renderer: Renderer) {
-    super();
-    this.renderer = renderer;
+    const linewidth = this.renderer.config.scene.transforms?.lineWidth ?? DEFAULT_LINE_WIDTH_PX;
+    const color = stringToRgb(
+      new THREE.Color(),
+      this.renderer.config.scene.transforms?.lineColor ?? DEFAULT_LINE_COLOR_STR,
+    );
+    this.#lineMaterial = new LineMaterial({ linewidth });
+    this.#lineMaterial.color = color;
 
-    this.lineMaterial = new LineMaterial({ linewidth: 2 });
-    this.lineMaterial.color = YELLOW_COLOR;
+    const options = { resolution: renderer.input.canvasSize, worldUnits: false };
 
-    this.linePickingMaterial = linePickingMaterial(PICKING_LINE_SIZE, this.renderer.materialCache);
-
-    renderer.setSettingsNodeProvider(LayerType.Transform, (_topicConfig) => {
-      // const cur = topicConfig as Partial<LayerSettingsTransform>;
-      return {};
-    });
-  }
-
-  dispose(): void {
-    for (const renderable of this.axesByFrameId.values()) {
-      releaseStandardMaterial(this.renderer.materialCache);
-      renderable.userData.shaftMesh.dispose();
-      renderable.userData.headMesh.dispose();
-      this.renderer.labels.removeById(`tf:${renderable.userData.frameId}`);
-      renderable.children.length = 0;
-    }
-    this.children.length = 0;
-    this.axesByFrameId.clear();
-    this.lineMaterial.dispose();
-    releaseLinePickingMaterial(PICKING_LINE_SIZE, this.renderer.materialCache);
-  }
-
-  addTransformMessage(tf: TF): void {
-    const addParent = !this.renderer.transformTree.hasFrame(tf.header.frame_id);
-    const addChild = !this.renderer.transformTree.hasFrame(tf.child_frame_id);
-
-    // Create a new transform and add it to the renderer's TransformTree
-    const stamp = rosTimeToNanoSec(tf.header.stamp);
-    const t = tf.transform.translation;
-    const q = tf.transform.rotation;
-    const transform = new Transform([t.x, t.y, t.z], [q.x, q.y, q.z, q.w]);
-    this.renderer.transformTree.addTransform(
-      tf.child_frame_id,
-      tf.header.frame_id,
-      stamp,
-      transform,
+    this.#lineGeometry = this.renderer.sharedGeometry.getGeometry(
+      this.constructor.name,
+      createLineGeometry,
     );
 
-    if (addParent) {
-      this._addFrameAxis(tf.header.frame_id);
-    }
-    if (addChild) {
-      this._addFrameAxis(tf.child_frame_id);
-    }
+    this.#linePickingMaterial = makeLinePickingMaterial(PICKING_LINE_SIZE, options);
 
-    if (addParent || addChild) {
-      log.debug(`Added transform "${tf.header.frame_id}_T_${tf.child_frame_id}"`);
-      this.renderer.emit("transformTreeUpdated", this.renderer);
-    }
+    renderer.on("transformTreeUpdated", this.#handleTransformTreeUpdated);
+
+    this.#defaultRenderableSettings = { ...DEFAULT_SETTINGS, ...defaultRenderableSettings };
   }
 
-  addCoordinateFrame(frameId: string): void {
-    this._addFrameAxis(frameId);
+  public override dispose(): void {
+    this.renderer.off("transformTreeUpdated", this.#handleTransformTreeUpdated);
+    this.#lineMaterial.dispose();
+    this.#linePickingMaterial.dispose();
+    super.dispose();
   }
 
-  setTransformSettings(frameId: string, settings: Partial<LayerSettingsTransform>): void {
-    const renderable = this.axesByFrameId.get(frameId);
-    if (renderable) {
-      renderable.userData.settings = { ...renderable.userData.settings, ...settings };
-      // Clear errors for this frame if visibility is toggled off
-      if (!renderable.userData.settings.visible) {
-        this.renderer.layerErrors.clearPath(renderable.userData.path);
-      }
-    }
+  public override removeAllRenderables(): void {
+    // Don't destroy frame axis renderables on clear() since `renderer.transformTree`
+    // is left untouched
   }
 
-  startFrame(currentTime: bigint): void {
-    this.lineMaterial.resolution = this.renderer.input.canvasSize;
+  public override settingsNodes(): SettingsTreeEntry[] {
+    const config = this.renderer.config;
+    const configTransforms = config.transforms;
+    const handler = this.handleSettingsAction;
+    const frameCount = this.renderer.coordinateFrameList.length;
+    const children: SettingsTreeChildren = {
+      settings: {
+        label: t("threeDee:settings"),
+        defaultExpansionState: "collapsed",
+        order: 0,
+        fields: {
+          editable: {
+            label: t("threeDee:editable"),
+            input: "boolean",
+            value: config.scene.transforms?.editable ?? DEFAULT_EDITABLE,
+          },
+          showLabel: {
+            label: t("threeDee:labels"),
+            input: "boolean",
+            value: config.scene.transforms?.showLabel ?? true,
+          },
+          ...((config.scene.transforms?.showLabel ?? true) && {
+            labelSize: {
+              label: t("threeDee:labelSize"),
+              input: "number",
+              min: 0,
+              step: 0.01,
+              precision: 2,
+              placeholder: String(DEFAULT_TF_LABEL_SIZE),
+              value: config.scene.transforms?.labelSize,
+            },
+          }),
+          axisScale: fieldSize(
+            t("threeDee:axisScale"),
+            config.scene.transforms?.axisScale,
+            DEFAULT_AXIS_SCALE,
+          ),
+          lineWidth: {
+            label: t("threeDee:lineWidth"),
+            input: "number",
+            min: 0,
+            step: 0.5,
+            precision: 1,
+            value: config.scene.transforms?.lineWidth,
+            placeholder: String(DEFAULT_LINE_WIDTH_PX),
+          },
+          lineColor: {
+            label: t("threeDee:lineColor"),
+            input: "rgb",
+            value: config.scene.transforms?.lineColor ?? DEFAULT_LINE_COLOR_STR,
+          },
+          enablePreloading: {
+            label: t("threeDee:enablePreloading"),
+            input: "boolean",
+            value: config.scene.transforms?.enablePreloading ?? true,
+          },
+        },
+      },
+    };
 
-    const renderFrameId = this.renderer.renderFrameId;
-    const fixedFrameId = this.renderer.fixedFrameId;
-    if (renderFrameId == undefined || fixedFrameId == undefined) {
-      this.visible = false;
-      return;
+    let order = 1;
+    for (const { label, value: frameId } of this.renderer.coordinateFrameList) {
+      const frameKey = `frame:${frameId}`;
+      const tfConfig = this.#getRenderableSettingsWithDefaults(configTransforms[frameKey] ?? {});
+      const frame = this.renderer.transformTree.frame(frameId);
+      const fields = buildSettingsFields(frame, this.renderer.currentTime, config);
+      tempTfPath[1] = frameKey;
+      children[frameKey] = {
+        label,
+        fields,
+        visible: tfConfig.visible,
+        order: order++,
+        defaultExpansionState: "collapsed",
+        error: this.renderer.settings.errors.errors.errorAtPath(tempTfPath),
+      };
     }
-    this.visible = true;
 
-    // Update the arrow poses
-    for (const [frameId, renderable] of this.axesByFrameId.entries()) {
-      renderable.visible = renderable.userData.settings.visible;
+    return [
+      {
+        path: ["transforms"],
+        node: {
+          label: `${t("threeDee:transforms")}${frameCount > 0 ? ` (${frameCount})` : ""}`,
+          actions: [
+            { id: "show-all", type: "action", label: t("threeDee:showAll") },
+            { id: "hide-all", type: "action", label: t("threeDee:hideAll") },
+          ],
+          handler,
+          children,
+        },
+      },
+    ];
+  }
+
+  public override startFrame(
+    currentTime: bigint,
+    renderFrameId: string,
+    fixedFrameId: string,
+  ): void {
+    // Keep the material's `resolution` uniform in sync with the actual canvas size
+    this.#lineMaterial.resolution = this.renderer.input.canvasSize;
+
+    // Update all the transforms settings nodes each frame since they contain
+    // fields that change when currentTime changes
+    this.updateSettingsTree();
+
+    super.startFrame(currentTime, renderFrameId, fixedFrameId);
+
+    // Compute the label offset based on the axis length and label size. We want the label
+    // to float a little above the up axis arrow, proportional to the height of the label
+    const axisScale = this.renderer.config.scene.transforms?.axisScale ?? DEFAULT_AXIS_SCALE;
+    const axisLength = AXIS_LENGTH * axisScale;
+    const labelSize = this.renderer.config.scene.transforms?.labelSize ?? DEFAULT_TF_LABEL_SIZE;
+    const labelScale = this.renderer.config.scene.labelScaleFactor ?? DEFAULT_LABEL_SCALE_FACTOR;
+    const labelOffsetZ = axisLength + labelSize * labelScale * 1.5;
+
+    // Update the lines and labels between coordinate frames
+    for (const renderable of this.renderables.values()) {
+      // lines and labels are children of the renderable and won't render if the renderer isn't visible
+      // so we can skip these updates
       if (!renderable.visible) {
         continue;
       }
-
-      const updated = updatePose(
-        renderable,
-        this.renderer.transformTree,
-        renderFrameId,
-        fixedFrameId,
-        frameId,
-        currentTime,
-        currentTime,
-      );
-      renderable.visible = updated;
-      if (!updated) {
-        const message = missingTransformMessage(renderFrameId, fixedFrameId, frameId);
-        this.renderer.layerErrors.add(renderable.userData.path, MISSING_TRANSFORM, message);
-      } else {
-        this.renderer.layerErrors.remove(renderable.userData.path, MISSING_TRANSFORM);
-      }
-    }
-
-    // Update the lines between coordinate frames
-    for (const [_frameId, childRenderable] of this.axesByFrameId.entries()) {
-      const line = childRenderable.userData.parentLine;
-      if (line) {
-        line.visible = false;
-        const childFrame = this.renderer.transformTree.frame(childRenderable.userData.frameId);
-        const parentFrame = childFrame?.parent();
-        if (parentFrame) {
-          const parentRenderable = this.axesByFrameId.get(parentFrame.id);
-          if (parentRenderable?.visible === true) {
-            parentRenderable.getWorldPosition(tempVec);
-            const dist = tempVec.distanceTo(childRenderable.getWorldPosition(tempVecB));
-            line.lookAt(tempVec);
-            line.rotateY(-PI_2);
-            line.scale.set(dist, 1, 1);
-            line.visible = true;
-          }
+      const line = renderable.userData.parentLine;
+      const childFrame = this.renderer.transformTree.frame(renderable.userData.frameId);
+      const parentFrame = childFrame?.parent();
+      // NOTE: tempVecB should not be used until the label uses it below
+      const worldPosition = tempVecB;
+      renderable.getWorldPosition(worldPosition);
+      // Lines require a parent renderable because they draw a line from the parent
+      // frame origin to the child frame origin
+      line.visible = false;
+      if (parentFrame) {
+        const parentRenderable = this.renderables.get(parentFrame.id);
+        if (parentRenderable?.visible === true) {
+          const parentWorldPosition = tempVec;
+          parentRenderable.getWorldPosition(parentWorldPosition);
+          const dist = parentWorldPosition.distanceTo(worldPosition);
+          line.lookAt(parentWorldPosition);
+          line.rotateY(-PI_2);
+          line.scale.set(dist, 1, 1);
+          line.visible = true;
         }
       }
+
+      const label = renderable.userData.label;
+      label.visible = this.renderer.config.scene.transforms?.showLabel ?? true;
+      // Add the label offset in "world" coordinates (in the render frame)
+      worldPosition.z += labelOffsetZ;
+      // Transform worldPosition back to the local coordinate frame of the
+      // renderable, which the label is a child of
+      renderable.worldToLocal(worldPosition);
+      label.position.set(worldPosition.x, worldPosition.y, worldPosition.z);
     }
   }
 
-  private _addFrameAxis(frameId: string): void {
-    if (this.axesByFrameId.has(frameId)) {
+  public override setColorScheme(
+    colorScheme: "dark" | "light",
+    backgroundColor: THREE.Color | undefined,
+  ): void {
+    const foreground = colorScheme === "dark" ? 1 : 0;
+    this.#labelForegroundColor = foreground;
+    this.#labelBackgroundColor.setRGB(1 - foreground, 1 - foreground, 1 - foreground);
+    if (backgroundColor) {
+      this.#labelForegroundColor =
+        getLuminance(backgroundColor.r, backgroundColor.g, backgroundColor.b) > 0.5 ? 0 : 1;
+      this.#labelBackgroundColor.copy(backgroundColor);
+    }
+
+    for (const renderable of this.renderables.values()) {
+      renderable.userData.label.setColor(
+        this.#labelForegroundColor,
+        this.#labelForegroundColor,
+        this.#labelForegroundColor,
+      );
+      renderable.userData.label.setBackgroundColor(
+        this.#labelBackgroundColor.r,
+        this.#labelBackgroundColor.g,
+        this.#labelBackgroundColor.b,
+      );
+    }
+  }
+
+  #setLabelSize(size: number): void {
+    for (const renderable of this.renderables.values()) {
+      renderable.userData.label.setLineHeight(size);
+    }
+  }
+
+  #setAxisScale(scale: number): void {
+    for (const renderable of this.renderables.values()) {
+      renderable.userData.axis.scale.set(scale, scale, scale);
+    }
+  }
+
+  #setLineWidth(width: number): void {
+    this.#lineMaterial.linewidth = width;
+  }
+
+  #setLineColor(color: string): void {
+    stringToRgb(this.#lineMaterial.color, color);
+  }
+
+  public override handleSettingsAction = (action: SettingsTreeAction): void => {
+    const path = action.payload.path;
+
+    // eslint-disable-next-line @foxglove/no-boolean-parameters
+    const toggleFrameVisibility = (value: boolean) => {
+      for (const renderable of this.renderables.values()) {
+        renderable.userData.settings.visible = value;
+      }
+
+      this.renderer.updateConfig((draft) => {
+        for (const frameId of this.renderables.keys()) {
+          const frameKeySanitized = frameId === "settings" ? "$settings" : `frame:${frameId}`;
+          draft.transforms[frameKeySanitized] ??= {};
+          draft.transforms[frameKeySanitized]!.visible = value;
+        }
+      });
+
+      this.updateSettingsTree();
+    };
+
+    if (action.action === "perform-node-action") {
+      if (action.payload.id === "show-all") {
+        // Show all frames
+        toggleFrameVisibility(true);
+      } else if (action.payload.id === "hide-all") {
+        // Hide all frames
+        toggleFrameVisibility(false);
+      }
       return;
     }
 
-    // Create a scene graph object to hold the three arrows, a text label, and a
-    // line to the parent frame if it exists
-    const renderable = new THREE.Object3D() as FrameAxisRenderable;
-    renderable.name = frameId;
+    if (path.length !== 3) {
+      return; // Doesn't match the pattern of ["transforms", "settings" | `frame:${frameId}`, field]
+    }
 
-    // Create three arrow shafts
-    const arrowMaterial = standardMaterial(this.renderer.materialCache);
-    const shaftGeometry = FrameAxes.ShaftGeometry(this.renderer.maxLod);
-    const shaftInstances = new THREE.InstancedMesh(shaftGeometry, arrowMaterial, 3);
-    shaftInstances.castShadow = true;
-    shaftInstances.receiveShadow = true;
-    renderable.add(shaftInstances);
-    // Set x, y, and z axis arrow shaft directions
-    tempVec.set(SHAFT_LENGTH, SHAFT_DIAMETER, SHAFT_DIAMETER);
-    shaftInstances.setMatrixAt(0, tempMat4.identity().scale(tempVec));
-    shaftInstances.setMatrixAt(1, tempMat4.makeRotationZ(PI_2).scale(tempVec));
-    shaftInstances.setMatrixAt(2, tempMat4.makeRotationY(-PI_2).scale(tempVec));
-    shaftInstances.setColorAt(0, RED_COLOR);
-    shaftInstances.setColorAt(1, GREEN_COLOR);
-    shaftInstances.setColorAt(2, BLUE_COLOR);
+    if (path[1] === "settings") {
+      const setting = path[2]!;
+      const value = action.payload.value;
 
-    // Create three arrow heads
-    const headGeometry = FrameAxes.HeadGeometry(this.renderer.maxLod);
-    const headInstances = new THREE.InstancedMesh(headGeometry, arrowMaterial, 3);
-    headInstances.castShadow = true;
-    headInstances.receiveShadow = true;
-    renderable.add(headInstances);
-    // Set x, y, and z axis arrow head directions
-    tempVec.set(HEAD_LENGTH, HEAD_DIAMETER, HEAD_DIAMETER);
-    tempMat4.identity().scale(tempVec).setPosition(SHAFT_LENGTH, 0, 0);
-    headInstances.setMatrixAt(0, tempMat4);
-    tempMat4.makeRotationZ(PI_2).scale(tempVec).setPosition(0, SHAFT_LENGTH, 0);
-    headInstances.setMatrixAt(1, tempMat4);
-    tempMat4.makeRotationY(-PI_2).scale(tempVec).setPosition(0, 0, SHAFT_LENGTH);
-    headInstances.setMatrixAt(2, tempMat4);
-    headInstances.setColorAt(0, RED_COLOR);
-    headInstances.setColorAt(1, GREEN_COLOR);
-    headInstances.setColorAt(2, BLUE_COLOR);
+      this.saveSetting(["scene", "transforms", setting], value);
 
+      if (setting === "editable") {
+        this.#updateFrameAxes();
+      } else if (setting === "labelSize") {
+        const labelSize = value as number | undefined;
+        this.#setLabelSize(labelSize ?? DEFAULT_TF_LABEL_SIZE);
+      } else if (setting === "axisScale") {
+        const axisScale = value as number | undefined;
+        this.#setAxisScale(axisScale ?? DEFAULT_AXIS_SCALE);
+      } else if (setting === "lineWidth") {
+        const lineWidth = value as number | undefined;
+        this.#setLineWidth(lineWidth ?? DEFAULT_LINE_WIDTH_PX);
+      } else if (setting === "lineColor") {
+        const lineColor = value as string | undefined;
+        this.#setLineColor(lineColor ?? DEFAULT_LINE_COLOR_STR);
+      }
+    } else {
+      this.saveSetting(path, action.payload.value);
+
+      // Update the renderable
+      const frameKey = path[1]!;
+      const frameId = frameKey.replace(/^frame:/, "");
+      const renderable = this.renderables.get(frameId);
+      if (renderable) {
+        const settings = this.renderer.config.transforms[frameKey] as
+          | Partial<LayerSettingsTransform>
+          | undefined;
+        renderable.userData.settings = this.#getRenderableSettingsWithDefaults(settings ?? {});
+
+        this.#updateFrameAxis(renderable);
+      }
+    }
+  };
+
+  #getRenderableSettingsWithDefaults(
+    partialDefinedSettings: Partial<LayerSettingsTransform>,
+  ): LayerSettingsTransform {
+    return { ...this.#defaultRenderableSettings, ...partialDefinedSettings };
+  }
+
+  #handleTransformTreeUpdated = (): void => {
+    for (const frameId of this.renderer.transformTree.frames().keys()) {
+      this.#addFrameAxis(frameId);
+    }
+    const config = this.renderer.config;
+    if (config.scene.transforms?.editable === true) {
+      this.#updateFrameAxes();
+    }
+    this.updateSettingsTree();
+  };
+
+  #addFrameAxis(frameId: string): void {
+    if (this.renderables.has(frameId)) {
+      return;
+    }
+
+    const config = this.renderer.config;
     const frame = this.renderer.transformTree.frame(frameId);
     if (!frame) {
       throw new Error(`CoordinateFrame "${frameId}" was not created`);
     }
 
-    const frameDisplayName =
-      frame.id === "" || frame.id.startsWith(" ") || frame.id.endsWith(" ")
-        ? `"${frame.id}"`
-        : frame.id;
-
     // Text label
-    const label = this.renderer.labels.setLabel(`tf:${frameId}`, { text: frameDisplayName });
-    label.position.set(0, 0, 0.4);
-    renderable.add(label);
+    const text = frame.displayName();
+    const label = this.renderer.labelPool.acquire();
+    label.setBillboard(true);
+    label.setText(text);
+    label.setLineHeight(config.scene.transforms?.labelSize ?? DEFAULT_TF_LABEL_SIZE);
+    label.setColor(
+      this.#labelForegroundColor,
+      this.#labelForegroundColor,
+      this.#labelForegroundColor,
+    );
+    label.setBackgroundColor(
+      this.#labelBackgroundColor.r,
+      this.#labelBackgroundColor.g,
+      this.#labelBackgroundColor.b,
+    );
 
     // Set the initial settings from default values merged with any user settings
-    const userSettings = this.renderer.config.transforms[frameId] as
-      | Partial<LayerSettingsTransform>
-      | undefined;
-    const settings = { ...DEFAULT_SETTINGS, ...userSettings };
+    const frameKey = `frame:${frameId}`;
+    const userSettings = config.transforms[frameKey] as Partial<LayerSettingsTransform> | undefined;
+    const settings = this.#getRenderableSettingsWithDefaults(userSettings ?? {});
 
-    renderable.userData = {
+    // Parent line
+    const parentLine = new Line2(this.#lineGeometry, this.#lineMaterial);
+    parentLine.castShadow = true;
+    parentLine.receiveShadow = false;
+    parentLine.userData.pickingMaterial = this.#linePickingMaterial;
+
+    // Three arrow axis
+    const axis = new Axis(frameId, this.renderer);
+    const axisScale = config.scene.transforms?.axisScale ?? DEFAULT_AXIS_SCALE;
+    axis.scale.set(axisScale, axisScale, axisScale);
+
+    // Create a scene graph object to hold the axis, a text label, and a line to
+    // the parent frame
+    const renderable = new FrameAxisRenderable(frameId, this.renderer, {
+      receiveTime: 0n,
+      messageTime: 0n,
       frameId,
-      path: ["transforms", frameId],
       pose: makePose(),
+      settingsPath: ["transforms", frameKey],
       settings,
-      shaftMesh: shaftInstances,
-      headMesh: headInstances,
+      axis,
       label,
-      parentLine: undefined,
-    };
-
-    // Check if this frame's parent exists
-    const parentFrame = frame.parent();
-    if (parentFrame) {
-      const parentRenderable = this.axesByFrameId.get(parentFrame.id);
-      if (parentRenderable) {
-        this._addChildParentLine(renderable);
-      }
-    }
-
-    // Find all children of this frame
-    for (const curFrame of this.renderer.transformTree.frames().values()) {
-      if (curFrame.parent() === frame) {
-        const curRenderable = this.axesByFrameId.get(curFrame.id);
-        if (curRenderable) {
-          this._addChildParentLine(curRenderable);
-        }
-      }
-    }
+      parentLine,
+    });
+    renderable.add(axis);
+    renderable.add(label);
+    renderable.add(parentLine);
 
     this.add(renderable);
-    this.axesByFrameId.set(frameId, renderable);
+    this.renderables.set(frameId, renderable);
+
+    this.#updateFrameAxis(renderable);
   }
 
-  private _addChildParentLine(renderable: FrameAxisRenderable): void {
-    if (renderable.userData.parentLine) {
-      renderable.remove(renderable.userData.parentLine);
+  #updateFrameAxes(): void {
+    for (const renderable of this.renderables.values()) {
+      this.#updateFrameAxis(renderable);
     }
-    const line = new Line2(FrameAxes.LineGeometry(), this.lineMaterial);
-    line.castShadow = true;
-    line.receiveShadow = false;
-    line.userData.pickingMaterial = this.linePickingMaterial;
-
-    renderable.add(line);
-    renderable.userData.parentLine = line;
   }
 
-  static ShaftGeometry(lod: DetailLevel): THREE.CylinderGeometry {
-    if (!FrameAxes.shaftGeometry || lod !== FrameAxes.shaftLod) {
-      const subdivs = arrowShaftSubdivisions(lod);
-      FrameAxes.shaftGeometry = new THREE.CylinderGeometry(0.5, 0.5, 1, subdivs, 1, false);
-      FrameAxes.shaftGeometry.rotateZ(-PI_2);
-      FrameAxes.shaftGeometry.translate(0.5, 0, 0);
-      FrameAxes.shaftGeometry.computeBoundingSphere();
-      FrameAxes.shaftLod = lod;
+  #updateFrameAxis(renderable: FrameAxisRenderable): void {
+    const frame = this.renderer.transformTree.getOrCreateFrame(renderable.userData.frameId);
+
+    // Check if TF editing is disabled
+    const editable = this.renderer.config.scene.transforms?.editable ?? DEFAULT_EDITABLE;
+    if (!editable) {
+      frame.offsetPosition = undefined;
+      frame.offsetEulerDegrees = undefined;
+      return;
     }
-    return FrameAxes.shaftGeometry;
+
+    const frameKey = `frame:${renderable.userData.frameId}`;
+    frame.offsetPosition = getOffset(this.renderer.config.transforms[frameKey]?.xyzOffset);
+    frame.offsetEulerDegrees = getOffset(this.renderer.config.transforms[frameKey]?.rpyCoefficient);
+  }
+}
+function createLineGeometry(): LineGeometry {
+  const lineGeometry = new LineGeometry();
+  lineGeometry.setPositions([0, 0, 0, 1, 0, 0]);
+  return lineGeometry;
+}
+
+function buildSettingsFields(
+  frame: CoordinateFrame | undefined,
+  currentTime: bigint | undefined,
+  config: Immutable<RendererConfig>,
+): SettingsTreeFields {
+  const frameKey = frame ? `frame:${frame.id}` : "";
+  const parentFrameId = frame?.parent()?.id;
+
+  if (parentFrameId == undefined) {
+    return { parent: { label: "Parent", input: "string", readonly: true, value: "<root>" } };
   }
 
-  static HeadGeometry(lod: DetailLevel): THREE.ConeGeometry {
-    if (!FrameAxes.headGeometry || lod !== FrameAxes.headLod) {
-      const subdivs = arrowHeadSubdivisions(lod);
-      FrameAxes.headGeometry = new THREE.ConeGeometry(0.5, 1, subdivs, 1, false);
-      FrameAxes.headGeometry.rotateZ(-PI_2);
-      FrameAxes.headGeometry.translate(0.5, 0, 0);
-      FrameAxes.headGeometry.computeBoundingSphere();
-      FrameAxes.headLod = lod;
+  const historySizeValue = String(frame?.transformsSize() ?? 0);
+  let ageValue: string | undefined;
+  let xyzValue: THREE.Vector3Tuple | undefined;
+  let rpyValue: THREE.Vector3Tuple | undefined;
+
+  if (currentTime != undefined && frame) {
+    if (frame.findClosestTransforms(tempLower, tempUpper, currentTime, MAX_DURATION)) {
+      const [transformTime, transform] = tempUpper;
+      ageValue =
+        transformTime < currentTime ? formatShortDuration(currentTime - transformTime) : "0 ns";
+      const p = transform.position() as THREE.Vector3Tuple;
+      const q = transform.rotation() as THREE.Vector4Tuple;
+      xyzValue = [round(p[0], 3), round(p[1], 3), round(p[2], 3)];
+      tempQuaternion.set(q[0], q[1], q[2], q[3]);
+      tempEuler.setFromQuaternion(tempQuaternion, "XYZ");
+      rpyValue = [
+        round(THREE.MathUtils.radToDeg(tempEuler.x), 3),
+        round(THREE.MathUtils.radToDeg(tempEuler.y), 3),
+        round(THREE.MathUtils.radToDeg(tempEuler.z), 3),
+      ];
     }
-    return FrameAxes.headGeometry;
   }
 
-  static LineGeometry(): LineGeometry {
-    if (!FrameAxes.lineGeometry) {
-      FrameAxes.lineGeometry = new LineGeometry();
-      FrameAxes.lineGeometry.setPositions([0, 0, 0, 1, 0, 0]);
+  const fields: SettingsTreeFields = {
+    parent: {
+      label: "Parent",
+      input: "string",
+      readonly: true,
+      value: parentFrameId,
+    },
+    age: {
+      label: "Age",
+      input: "string",
+      readonly: true,
+      value: ageValue,
+    },
+    historySize: {
+      label: "History Size",
+      input: "string",
+      readonly: true,
+      value: historySizeValue,
+    },
+    xyz: {
+      label: "Translation",
+      input: "vec3",
+      precision: PRECISION_DISTANCE,
+      labels: ["X", "Y", "Z"],
+      readonly: true,
+      value: xyzValue,
+    },
+    rpy: {
+      label: "Rotation",
+      input: "vec3",
+      precision: PRECISION_DEGREES,
+      labels: ["R", "P", "Y"],
+      readonly: true,
+      value: rpyValue,
+    },
+  };
+
+  if (config.scene.transforms?.editable ?? DEFAULT_EDITABLE) {
+    let xyzOffsetValue = config.transforms[frameKey]?.xyzOffset as THREE.Vector3Tuple | undefined;
+    let rpyCoefficient = config.transforms[frameKey]?.rpyCoefficient as
+      | THREE.Vector3Tuple
+      | undefined;
+
+    if (xyzOffsetValue && vec3IsZero(xyzOffsetValue)) {
+      xyzOffsetValue = undefined;
     }
-    return FrameAxes.lineGeometry;
+    if (rpyCoefficient && vec3IsZero(rpyCoefficient)) {
+      rpyCoefficient = undefined;
+    }
+
+    fields.xyzOffset = {
+      label: "Translation Offset",
+      input: "vec3",
+      precision: PRECISION_DISTANCE,
+      step: 0.1,
+      labels: ["X", "Y", "Z"],
+      value: xyzOffsetValue,
+    };
+    fields.rpyCoefficient = {
+      label: "Rotation Offset",
+      input: "vec3",
+      precision: PRECISION_DEGREES,
+      step: 1,
+      min: -180,
+      max: 180,
+      labels: ["R", "P", "Y"],
+      value: rpyCoefficient,
+    };
+  }
+
+  return fields;
+}
+
+const MS_TENTH_NS = BigInt(1e5);
+const MS_NS = BigInt(1e6);
+const SEC_NS = BigInt(1e9);
+const MIN_NS = BigInt(6e10);
+const HOUR_NS = BigInt(3.6e12);
+
+function formatShortDuration(duration: Duration): string {
+  const absDuration = abs(duration);
+  if (absDuration < MS_TENTH_NS) {
+    return `${duration} ns`;
+  } else if (absDuration < SEC_NS) {
+    return `${Number(duration / MS_NS).toFixed(1)} ms`;
+  } else if (absDuration < MIN_NS) {
+    return `${Number(duration / SEC_NS).toFixed(1)} s`;
+  } else if (absDuration < HOUR_NS) {
+    return `${Number(duration / MIN_NS).toFixed(1)} min`;
+  } else {
+    return `${Number(duration / HOUR_NS).toFixed(1)} hr`;
   }
 }
 
-const COLOR_WHITE = { r: 1, g: 1, b: 1, a: 1 };
-
-function standardMaterial(materialCache: MaterialCache): THREE.MeshStandardMaterial {
-  return materialCache.acquire(
-    StandardColor.id(COLOR_WHITE),
-    () => StandardColor.create(COLOR_WHITE),
-    StandardColor.dispose,
-  );
+function abs(x: bigint): bigint {
+  return x < 0n ? -x : x;
 }
 
-function releaseStandardMaterial(materialCache: MaterialCache): void {
-  materialCache.release(StandardColor.id(COLOR_WHITE));
+function round(x: number, precision: number): number {
+  return Number(x.toFixed(precision));
+}
+
+function vec3IsZero(v: THREE.Vector3Tuple, eps = 1e-6): boolean {
+  return Math.abs(v[0]) < eps && Math.abs(v[1]) < eps && Math.abs(v[2]) < eps;
+}
+
+function getOffset(
+  maybeOffset: Readonly<[number | undefined, number | undefined, number | undefined]> | undefined,
+): THREE.Vector3Tuple | undefined {
+  if (!maybeOffset) {
+    return undefined;
+  }
+  const [x = 0, y = 0, z = 0] = maybeOffset;
+  if (x === 0 && y === 0 && z === 0) {
+    return undefined;
+  }
+  return [x, y, z];
 }

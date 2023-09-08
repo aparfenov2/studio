@@ -2,35 +2,52 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
-import { ColorPicker } from "@fluentui/react";
-import { Popover, TextField } from "@mui/material";
+import { Popover, TextField, useTheme } from "@mui/material";
 import { useCallback, useState } from "react";
 import tinycolor from "tinycolor2";
 
 import Stack from "@foxglove/studio-base/components/Stack";
-import { fonts } from "@foxglove/studio-base/util/sharedStyleConstants";
 
+import { ColorPickerControl } from "./ColorPickerControl";
 import { ColorSwatch } from "./ColorSwatch";
 
 export function ColorGradientInput({
   colors,
+  disabled = false,
   onChange,
+  readOnly = false,
 }: {
   colors: undefined | readonly [string, string];
+  disabled?: boolean;
   onChange: (colors: [string, string]) => void;
+  readOnly?: boolean;
 }): JSX.Element {
   const [leftAnchor, setLeftAnchor] = useState<undefined | HTMLDivElement>(undefined);
   const [rightAnchor, setRightAnchor] = useState<undefined | HTMLDivElement>(undefined);
 
-  const handleLeftClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
-    setLeftAnchor(event.currentTarget);
-    setRightAnchor(undefined);
-  }, []);
+  const handleLeftClick = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      if (readOnly) {
+        return;
+      }
 
-  const handleRightClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
-    setLeftAnchor(undefined);
-    setRightAnchor(event.currentTarget);
-  }, []);
+      setLeftAnchor(event.currentTarget);
+      setRightAnchor(undefined);
+    },
+    [readOnly],
+  );
+
+  const handleRightClick = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      if (readOnly) {
+        return;
+      }
+
+      setLeftAnchor(undefined);
+      setRightAnchor(event.currentTarget);
+    },
+    [readOnly],
+  );
 
   const handleClose = useCallback(() => {
     setLeftAnchor(undefined);
@@ -42,12 +59,18 @@ export function ColorGradientInput({
   const safeLeftColor = tinycolor(leftColor).isValid() ? leftColor : "#000000";
   const safeRightColor = tinycolor(rightColor).isValid() ? rightColor : "#FFFFFF";
 
+  const theme = useTheme();
+
   return (
     <Stack
       direction="row"
+      alignItems="center"
+      position="relative"
+      paddingX={0.75}
       style={{
-        position: "relative",
-        backgroundImage: `linear-gradient(to right, ${safeLeftColor}, ${safeRightColor})`,
+        opacity: disabled ? 0.5 : 1,
+        pointerEvents: disabled ? "none" : "auto",
+        background: `linear-gradient(to right, ${safeLeftColor}, ${safeRightColor}), repeating-conic-gradient(transparent 0 90deg, ${theme.palette.action.disabled} 90deg 180deg) top left/10px 10px repeat`,
       }}
     >
       <ColorSwatch color={safeLeftColor} onClick={handleLeftClick} />
@@ -72,18 +95,13 @@ export function ColorGradientInput({
           horizontal: "center",
         }}
       >
-        <ColorPicker
-          color={leftColor}
+        <ColorPickerControl
+          value={leftColor}
           alphaType="alpha"
-          styles={{
-            tableHexCell: { width: "35%" },
-            input: {
-              input: {
-                fontFeatureSettings: `${fonts.SANS_SERIF_FEATURE_SETTINGS}, 'zero'`,
-              },
-            },
+          onChange={(newValue) => {
+            onChange([newValue, rightColor]);
           }}
-          onChange={(_event, newValue) => onChange([newValue.str, rightColor])}
+          onEnterKey={handleClose}
         />
       </Popover>
       <Popover
@@ -99,18 +117,13 @@ export function ColorGradientInput({
           horizontal: "center",
         }}
       >
-        <ColorPicker
-          color={rightColor}
+        <ColorPickerControl
+          value={rightColor}
           alphaType="alpha"
-          styles={{
-            tableHexCell: { width: "35%" },
-            input: {
-              input: {
-                fontFeatureSettings: `${fonts.SANS_SERIF_FEATURE_SETTINGS}, 'zero'`,
-              },
-            },
+          onChange={(newValue) => {
+            onChange([leftColor, newValue]);
           }}
-          onChange={(_event, newValue) => onChange([leftColor, newValue.str])}
+          onEnterKey={handleClose}
         />
       </Popover>
     </Stack>

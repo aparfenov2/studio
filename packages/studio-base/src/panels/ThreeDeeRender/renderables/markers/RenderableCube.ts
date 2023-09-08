@@ -2,75 +2,79 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
-/* eslint-disable no-underscore-dangle */
-
 import * as THREE from "three";
 
-import type { Renderer } from "../../Renderer";
-import { rgbaEqual } from "../../color";
-import { Marker } from "../../ros";
 import { RenderableMarker } from "./RenderableMarker";
-import { releaseStandardMaterial, standardMaterial } from "./materials";
+import { makeStandardMaterial } from "./materials";
+import type { IRenderer } from "../../IRenderer";
+import { rgbToThreeColor } from "../../color";
+import { Marker } from "../../ros";
 
 export class RenderableCube extends RenderableMarker {
-  private static _geometry: THREE.BoxGeometry | undefined;
-  private static _edgesGeometry: THREE.EdgesGeometry | undefined;
+  #mesh: THREE.Mesh<THREE.BoxGeometry, THREE.MeshStandardMaterial>;
+  #outline: THREE.LineSegments;
 
-  mesh: THREE.Mesh<THREE.BoxGeometry, THREE.Material>;
-  outline: THREE.LineSegments | undefined;
-
-  constructor(topic: string, marker: Marker, renderer: Renderer) {
-    super(topic, marker, renderer);
+  public constructor(
+    topic: string,
+    marker: Marker,
+    receiveTime: bigint | undefined,
+    renderer: IRenderer,
+  ) {
+    super(topic, marker, receiveTime, renderer);
 
     // Cube mesh
-    this.mesh = new THREE.Mesh(
-      RenderableCube.geometry(),
-      standardMaterial(marker.color, renderer.materialCache),
+    const cubeGeometry = this.renderer.sharedGeometry.getGeometry(
+      `${this.constructor.name}-cube`,
+      createGeometry,
     );
-    this.mesh.castShadow = true;
-    this.mesh.receiveShadow = true;
-    this.add(this.mesh);
+    const cubeEdgesGeometry = this.renderer.sharedGeometry.getGeometry(
+      `${this.constructor.name}-cube-edges`,
+      () => createEdgesGeometry(cubeGeometry),
+    );
+    this.#mesh = new THREE.Mesh(cubeGeometry, makeStandardMaterial(marker.color));
+    this.#mesh.castShadow = true;
+    this.#mesh.receiveShadow = true;
+    this.add(this.#mesh);
 
     // Cube outline
-    this.outline = new THREE.LineSegments(
-      RenderableCube.edgesGeometry(),
-      renderer.materialCache.outlineMaterial,
-    );
-    this.outline.userData.picking = false;
-    this.mesh.add(this.outline);
+    this.#outline = new THREE.LineSegments(cubeEdgesGeometry, renderer.outlineMaterial);
+    this.#outline.userData.picking = false;
+    this.#mesh.add(this.#outline);
 
-    this.update(marker);
+    this.update(marker, receiveTime);
   }
 
-  override dispose(): void {
-    releaseStandardMaterial(this.userData.marker.color, this._renderer.materialCache);
+  public override dispose(): void {
+    this.#mesh.material.dispose();
   }
 
-  override update(marker: Marker): void {
-    const prevMarker = this.userData.marker;
-    super.update(marker);
+  public override update(newMarker: Marker, receiveTime: bigint | undefined): void {
+    super.update(newMarker, receiveTime);
+    const marker = this.userData.marker;
 
-    if (!rgbaEqual(marker.color, prevMarker.color)) {
-      releaseStandardMaterial(prevMarker.color, this._renderer.materialCache);
-      this.mesh.material = standardMaterial(marker.color, this._renderer.materialCache);
+    const transparent = marker.color.a < 1;
+    if (transparent !== this.#mesh.material.transparent) {
+      this.#mesh.material.transparent = transparent;
+      this.#mesh.material.depthWrite = !transparent;
+      this.#mesh.material.needsUpdate = true;
     }
+
+    this.#outline.visible = this.getSettings()?.showOutlines ?? true;
+
+    rgbToThreeColor(this.#mesh.material.color, marker.color);
+    this.#mesh.material.opacity = marker.color.a;
 
     this.scale.set(marker.scale.x, marker.scale.y, marker.scale.z);
   }
+}
 
-  static geometry(): THREE.BoxGeometry {
-    if (!RenderableCube._geometry) {
-      RenderableCube._geometry = new THREE.BoxGeometry(1, 1, 1);
-      RenderableCube._geometry.computeBoundingSphere();
-    }
-    return RenderableCube._geometry;
-  }
-
-  static edgesGeometry(): THREE.EdgesGeometry {
-    if (!RenderableCube._edgesGeometry) {
-      RenderableCube._edgesGeometry = new THREE.EdgesGeometry(RenderableCube.geometry(), 40);
-      RenderableCube._edgesGeometry.computeBoundingSphere();
-    }
-    return RenderableCube._edgesGeometry;
-  }
+export function createGeometry(): THREE.BoxGeometry {
+  const cubeGeometry = new THREE.BoxGeometry(1, 1, 1);
+  cubeGeometry.computeBoundingSphere();
+  return cubeGeometry;
+}
+function createEdgesGeometry(cubeGeometry: THREE.BoxGeometry): THREE.EdgesGeometry {
+  const cubeEdgesGeometry = new THREE.EdgesGeometry(cubeGeometry, 40);
+  cubeEdgesGeometry.computeBoundingSphere();
+  return cubeEdgesGeometry;
 }

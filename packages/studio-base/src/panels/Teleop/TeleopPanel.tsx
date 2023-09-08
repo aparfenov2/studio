@@ -6,15 +6,15 @@ import { set } from "lodash";
 import { useCallback, useEffect, useLayoutEffect, useState } from "react";
 import { DeepPartial } from "ts-essentials";
 
-import { definitions as commonDefs } from "@foxglove/rosmsg-msgs-common";
-import { PanelExtensionContext, Topic } from "@foxglove/studio";
-import EmptyState from "@foxglove/studio-base/components/EmptyState";
+import { ros1 } from "@foxglove/rosmsg-msgs-common";
 import {
-  EXPERIMENTAL_PanelExtensionContextWithSettings,
+  PanelExtensionContext,
   SettingsTreeAction,
   SettingsTreeNode,
-  SettingsTreeRoots,
-} from "@foxglove/studio-base/components/SettingsTreeEditor/types";
+  SettingsTreeNodes,
+  Topic,
+} from "@foxglove/studio";
+import EmptyState from "@foxglove/studio-base/components/EmptyState";
 import Stack from "@foxglove/studio-base/components/Stack";
 import ThemeProvider from "@foxglove/studio-base/theme/ThemeProvider";
 
@@ -42,11 +42,11 @@ type Config = {
   rightButton: { field: string; value: number };
 };
 
-function buildSettingsTree(config: Config, topics: readonly Topic[]): SettingsTreeRoots {
+function buildSettingsTree(config: Config, topics: readonly Topic[]): SettingsTreeNodes {
   const general: SettingsTreeNode = {
     label: "General",
     fields: {
-      publishRate: { label: "Publish Rate", input: "number", value: config.publishRate },
+      publishRate: { label: "Publish rate", input: "number", value: config.publishRate },
       topic: {
         label: "Topic",
         input: "autocomplete",
@@ -73,7 +73,7 @@ function buildSettingsTree(config: Config, topics: readonly Topic[]): SettingsTr
           field: {
             label: "Field",
             input: "select",
-            value: config.upButton.field,
+            value: config.downButton.field,
             options: geometryMsgOptions,
           },
           value: { label: "Value", input: "number", value: config.downButton.value },
@@ -85,7 +85,7 @@ function buildSettingsTree(config: Config, topics: readonly Topic[]): SettingsTr
           field: {
             label: "Field",
             input: "select",
-            value: config.upButton.field,
+            value: config.leftButton.field,
             options: geometryMsgOptions,
           },
           value: { label: "Value", input: "number", value: config.leftButton.value },
@@ -97,7 +97,7 @@ function buildSettingsTree(config: Config, topics: readonly Topic[]): SettingsTr
           field: {
             label: "Field",
             input: "select",
-            value: config.upButton.field,
+            value: config.rightButton.field,
             options: geometryMsgOptions,
           },
           value: { label: "Value", input: "number", value: config.rightButton.value },
@@ -169,12 +169,9 @@ function TeleopPanel(props: TeleopPanelProps): JSX.Element {
 
   useEffect(() => {
     const tree = buildSettingsTree(config, topics);
-    // eslint-disable-next-line no-underscore-dangle
-    (
-      context as unknown as EXPERIMENTAL_PanelExtensionContextWithSettings
-    ).__updatePanelSettingsTree({
+    context.updatePanelSettingsEditor({
       actionHandler: settingsActionHandler,
-      roots: tree,
+      nodes: tree,
     });
     saveState(config);
   }, [config, context, saveState, settingsActionHandler, topics]);
@@ -188,8 +185,8 @@ function TeleopPanel(props: TeleopPanelProps): JSX.Element {
 
     context.advertise?.(currentTopic, "geometry_msgs/Twist", {
       datatypes: new Map([
-        ["geometry_msgs/Vector3", commonDefs["geometry_msgs/Vector3"]],
-        ["geometry_msgs/Twist", commonDefs["geometry_msgs/Twist"]],
+        ["geometry_msgs/Vector3", ros1["geometry_msgs/Vector3"]],
+        ["geometry_msgs/Twist", ros1["geometry_msgs/Twist"]],
       ]),
     });
 

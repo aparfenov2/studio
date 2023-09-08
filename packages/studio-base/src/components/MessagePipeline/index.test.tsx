@@ -14,12 +14,15 @@
 
 /* eslint-disable jest/no-conditional-expect */
 
-import { renderHook, RenderResult } from "@testing-library/react-hooks/dom";
+import { renderHook, act } from "@testing-library/react-hooks";
 import { PropsWithChildren, useCallback, useState } from "react";
-import { act } from "react-dom/test-utils";
+import { DeepPartial } from "ts-essentials";
 
 import AppConfigurationContext from "@foxglove/studio-base/context/AppConfigurationContext";
-import { GlobalVariables } from "@foxglove/studio-base/hooks/useGlobalVariables";
+import {
+  EMPTY_GLOBAL_VARIABLES,
+  GlobalVariables,
+} from "@foxglove/studio-base/hooks/useGlobalVariables";
 import {
   Player,
   PlayerCapabilities,
@@ -35,30 +38,52 @@ import { MAX_PROMISE_TIMEOUT_TIME_MS } from "./pauseFrameForPromise";
 
 jest.setTimeout(MAX_PROMISE_TIMEOUT_TIME_MS * 3);
 
-type WrapperProps = {
-  player?: Player;
-  globalVariables?: GlobalVariables;
-};
-
-function Hook(_props: WrapperProps) {
-  return useMessagePipeline(useCallback((value) => value, []));
+// We require two state updates for each player emit() to take effect, because we  React 18 / @testing-library/react,
+async function doubleAct(fn: () => Promise<void>) {
+  let promise: Promise<void> | undefined;
+  act(() => void (promise = fn()));
+  await act(async () => await promise);
 }
 
-function Wrapper({ children, player, globalVariables = {} }: PropsWithChildren<WrapperProps>) {
-  const [config] = useState(() => makeMockAppConfiguration());
-  return (
-    <AppConfigurationContext.Provider value={config}>
-      <MessagePipelineProvider player={player} globalVariables={globalVariables}>
-        {children}
-      </MessagePipelineProvider>
-    </AppConfigurationContext.Provider>
-  );
+function makeTestHook({
+  player,
+  globalVariables,
+}: {
+  player?: Player;
+  globalVariables?: GlobalVariables;
+}) {
+  const all: MessagePipelineContext[] = [];
+  function Hook() {
+    const value = useMessagePipeline(useCallback((ctx) => ctx, []));
+    all.push(value);
+    return value;
+  }
+  let currentPlayer = player;
+  function Wrapper({ children }: PropsWithChildren<unknown>) {
+    const [config] = useState(() => makeMockAppConfiguration());
+    return (
+      <AppConfigurationContext.Provider value={config}>
+        <MessagePipelineProvider
+          player={currentPlayer}
+          globalVariables={globalVariables ?? EMPTY_GLOBAL_VARIABLES}
+        >
+          {children}
+        </MessagePipelineProvider>
+      </AppConfigurationContext.Provider>
+    );
+  }
+  function setPlayer(newPlayer: Player) {
+    currentPlayer = newPlayer;
+  }
+
+  return { Hook, Wrapper, all, setPlayer };
 }
 
 describe("MessagePipelineProvider/useMessagePipeline", () => {
   it("returns empty data when no player is given", () => {
-    const { result } = renderHook(Hook, { wrapper: Wrapper });
-    expect(result.all).toEqual([
+    const { Hook, Wrapper, all } = makeTestHook({});
+    renderHook(Hook, { wrapper: Wrapper });
+    expect(all).toEqual([
       {
         playerState: {
           activeData: undefined,
@@ -68,33 +93,57 @@ describe("MessagePipelineProvider/useMessagePipeline", () => {
           progress: {},
         },
         subscriptions: [],
-        publishers: [],
         messageEventsBySubscriberId: new Map(),
         sortedTopics: [],
         datatypes: new Map(),
         setSubscriptions: expect.any(Function),
         setPublishers: expect.any(Function),
         publish: expect.any(Function),
+        callService: expect.any(Function),
+        fetchAsset: expect.any(Function),
         startPlayback: undefined,
         pausePlayback: undefined,
         setPlaybackSpeed: undefined,
         seekPlayback: undefined,
         setParameter: expect.any(Function),
         pauseFrame: expect.any(Function),
-        requestBackfill: expect.any(Function),
+      },
+      {
+        playerState: {
+          activeData: undefined,
+          capabilities: [],
+          presence: PlayerPresence.NOT_PRESENT,
+          playerId: "",
+          progress: {},
+        },
+        subscriptions: [],
+        messageEventsBySubscriberId: new Map(),
+        sortedTopics: [],
+        datatypes: new Map(),
+        setSubscriptions: expect.any(Function),
+        setPublishers: expect.any(Function),
+        publish: expect.any(Function),
+        callService: expect.any(Function),
+        fetchAsset: expect.any(Function),
+        startPlayback: undefined,
+        pausePlayback: undefined,
+        setPlaybackSpeed: undefined,
+        seekPlayback: undefined,
+        setParameter: expect.any(Function),
+        pauseFrame: expect.any(Function),
       },
     ]);
   });
 
   it("updates when the player emits a new state", async () => {
     const player = new FakePlayer();
-    const { result } = renderHook(Hook, {
-      wrapper: Wrapper,
-      initialProps: { player },
-    });
+    const { Hook, Wrapper, all } = makeTestHook({ player });
+    renderHook(Hook, { wrapper: Wrapper });
 
-    await act(async () => await player.emit());
-    expect(result.all).toEqual([
+    await doubleAct(async () => {
+      await player.emit();
+    });
+    expect(all).toEqual([
       expect.objectContaining({
         playerState: {
           activeData: undefined,
@@ -116,25 +165,148 @@ describe("MessagePipelineProvider/useMessagePipeline", () => {
     ]);
   });
 
+  it("updates datatypes when player datatypes change", async () => {
+    const player = new FakePlayer();
+    const { Hook, Wrapper, all } = makeTestHook({ player });
+    renderHook(Hook, { wrapper: Wrapper });
+
+    await doubleAct(async () => {
+      await player.emit({
+        activeData: {
+          messages: [],
+          totalBytesReceived: 0,
+          currentTime: { sec: 0, nsec: 0 },
+          startTime: { sec: 0, nsec: 0 },
+          endTime: { sec: 0, nsec: 0 },
+          isPlaying: false,
+          speed: 1,
+          lastSeekTime: 0,
+          topics: [],
+          topicStats: new Map(),
+          datatypes: new Map([["Foo", { definitions: [] }]]),
+        },
+      });
+    });
+    await doubleAct(async () => {
+      await player.emit({
+        activeData: {
+          messages: [],
+          totalBytesReceived: 0,
+          currentTime: { sec: 0, nsec: 0 },
+          startTime: { sec: 0, nsec: 0 },
+          endTime: { sec: 0, nsec: 0 },
+          isPlaying: false,
+          speed: 1,
+          lastSeekTime: 0,
+          topics: [],
+          topicStats: new Map(),
+          datatypes: new Map([
+            ["Foo", { definitions: [] }],
+            ["Bar", { definitions: [] }],
+          ]),
+        },
+      });
+    });
+    expect(all.length).toBe(3);
+    expect(all[0]!.playerState).toEqual({
+      activeData: undefined,
+      capabilities: [],
+      presence: PlayerPresence.NOT_PRESENT,
+      playerId: "",
+      progress: {},
+    });
+    expect(all[1]!.datatypes).toEqual(new Map([["Foo", { definitions: [] }]]));
+    expect(all[2]!.datatypes).toEqual(
+      new Map([
+        ["Foo", { definitions: [] }],
+        ["Bar", { definitions: [] }],
+      ]),
+    );
+  });
+
+  it("updates sortedTopics when player topics change", async () => {
+    const player = new FakePlayer();
+    const { Hook, Wrapper, all } = makeTestHook({ player });
+    renderHook(Hook, { wrapper: Wrapper });
+
+    await doubleAct(async () => {
+      await player.emit({
+        activeData: {
+          messages: [],
+          totalBytesReceived: 0,
+          currentTime: { sec: 0, nsec: 0 },
+          startTime: { sec: 0, nsec: 0 },
+          endTime: { sec: 0, nsec: 0 },
+          isPlaying: false,
+          speed: 1,
+          lastSeekTime: 0,
+          topics: [{ name: "foo", schemaName: "Foo" }],
+          topicStats: new Map(),
+          datatypes: new Map(),
+        },
+      });
+    });
+    await doubleAct(async () => {
+      await player.emit({
+        activeData: {
+          messages: [],
+          totalBytesReceived: 0,
+          currentTime: { sec: 0, nsec: 0 },
+          startTime: { sec: 0, nsec: 0 },
+          endTime: { sec: 0, nsec: 0 },
+          isPlaying: false,
+          speed: 1,
+          lastSeekTime: 0,
+          topics: [
+            { name: "foo", schemaName: "Foo" },
+            { name: "bar", schemaName: "Bar" },
+          ],
+          topicStats: new Map(),
+          datatypes: new Map(),
+        },
+      });
+    });
+    expect(all).toEqual([
+      expect.objectContaining<DeepPartial<(typeof all)[0]>>({
+        playerState: {
+          activeData: undefined,
+          capabilities: [],
+          presence: PlayerPresence.NOT_PRESENT,
+          playerId: "",
+          progress: {},
+        },
+      }),
+      expect.objectContaining<DeepPartial<(typeof all)[0]>>({
+        sortedTopics: [{ name: "foo", schemaName: "Foo" }],
+      }),
+      expect.objectContaining<DeepPartial<(typeof all)[0]>>({
+        sortedTopics: [
+          { name: "bar", schemaName: "Bar" },
+          { name: "foo", schemaName: "Foo" },
+        ],
+      }),
+    ]);
+  });
+
   it("throws an error when the player emits before the previous emit has been resolved", async () => {
     const player = new FakePlayer();
+    const { Hook, Wrapper } = makeTestHook({ player });
     renderHook(Hook, {
       wrapper: Wrapper,
-      initialProps: { player },
     });
     act(() => {
       void player.emit();
     });
-    await expect(async () => await player.emit()).rejects.toThrow(
-      "New playerState was emitted before last playerState was rendered.",
-    );
+    await expect(async () => {
+      await player.emit();
+    }).rejects.toThrow("New playerState was emitted before last playerState was rendered.");
   });
 
   it("sets subscriptions", async () => {
     const player = new FakePlayer();
+    const { Hook, Wrapper } = makeTestHook({ player });
     const { result } = renderHook(Hook, {
       wrapper: Wrapper,
-      initialProps: { player },
     });
 
     act(() => {
@@ -151,7 +323,9 @@ describe("MessagePipelineProvider/useMessagePipeline", () => {
     ]);
     const lastSubscriptions = result.current.subscriptions;
     // cause the player to emit a frame outside the render loop to trigger another render
-    await act(async () => await player.emit());
+    await doubleAct(async () => {
+      await player.emit();
+    });
     // make sure subscriptions are reference equal when they don't change
     expect(result.current.subscriptions).toBe(lastSubscriptions);
   });
@@ -161,36 +335,35 @@ describe("MessagePipelineProvider/useMessagePipeline", () => {
   // send again itself.
   it("emits the last message on a topic for new subscriptions", async () => {
     const player = new FakePlayer();
+    const { Hook, Wrapper } = makeTestHook({ player });
     const { result } = renderHook(Hook, {
       wrapper: Wrapper,
-      initialProps: { player },
     });
-    await act(
-      async () =>
-        await player.emit({
-          activeData: {
-            messages: [
-              {
-                topic: "/input/foo",
-                receiveTime: { sec: 0, nsec: 0 },
-                message: { foo: "bar" },
-                sizeInBytes: 0,
-              },
-            ],
-            messageOrder: "receiveTime",
-            currentTime: { sec: 0, nsec: 0 },
-            startTime: { sec: 0, nsec: 0 },
-            endTime: { sec: 1, nsec: 0 },
-            isPlaying: true,
-            speed: 0.2,
-            lastSeekTime: 1234,
-            topics: [{ name: "/input/foo", datatype: "foo" }],
-            topicStats: new Map<string, TopicStats>([["/input/foo", { numMessages: 1 }]]),
-            datatypes: new Map(Object.entries({ foo: { definitions: [] } })),
-            totalBytesReceived: 1234,
-          },
-        }),
-    );
+    await doubleAct(async () => {
+      await player.emit({
+        activeData: {
+          messages: [
+            {
+              topic: "/input/foo",
+              receiveTime: { sec: 0, nsec: 0 },
+              message: { foo: "bar" },
+              schemaName: "foo",
+              sizeInBytes: 0,
+            },
+          ],
+          currentTime: { sec: 0, nsec: 0 },
+          startTime: { sec: 0, nsec: 0 },
+          endTime: { sec: 1, nsec: 0 },
+          isPlaying: true,
+          speed: 0.2,
+          lastSeekTime: 1234,
+          topics: [{ name: "/input/foo", schemaName: "foo" }],
+          topicStats: new Map<string, TopicStats>([["/input/foo", { numMessages: 1 }]]),
+          datatypes: new Map(Object.entries({ foo: { definitions: [] } })),
+          totalBytesReceived: 1234,
+        },
+      });
+    });
 
     act(() => {
       result.current.setSubscriptions("custom-id", [{ topic: "/input/foo" }]);
@@ -198,7 +371,9 @@ describe("MessagePipelineProvider/useMessagePipeline", () => {
     expect(result.current.subscriptions).toEqual([{ topic: "/input/foo" }]);
 
     // Emit empty player state to process new subscriptions
-    await act(async () => await player.emit());
+    await doubleAct(async () => {
+      await player.emit();
+    });
 
     expect(result.current.messageEventsBySubscriberId.get("custom-id")).toEqual([
       {
@@ -209,44 +384,232 @@ describe("MessagePipelineProvider/useMessagePipeline", () => {
           nsec: 0,
           sec: 0,
         },
+        schemaName: "foo",
         sizeInBytes: 0,
         topic: "/input/foo",
       },
     ]);
   });
 
-  it("sets publishers", async () => {
+  // https://github.com/foxglove/studio/issues/4694
+  it("does not inject the last message when the player changes", async () => {
     const player = new FakePlayer();
-    const { result } = renderHook(Hook, {
-      wrapper: Wrapper,
-      initialProps: { player },
+    const { Hook, Wrapper, setPlayer } = makeTestHook({ player });
+    const { result, rerender } = renderHook(Hook, { wrapper: Wrapper });
+    await doubleAct(async () => {
+      await player.emit({
+        activeData: {
+          messages: [
+            {
+              topic: "/input/foo",
+              receiveTime: { sec: 0, nsec: 0 },
+              message: { foo: "bar" },
+              schemaName: "foo",
+              sizeInBytes: 0,
+            },
+          ],
+          currentTime: { sec: 0, nsec: 0 },
+          startTime: { sec: 0, nsec: 0 },
+          endTime: { sec: 1, nsec: 0 },
+          isPlaying: true,
+          speed: 0.2,
+          lastSeekTime: 1234,
+          topics: [{ name: "/input/foo", schemaName: "foo" }],
+          topicStats: new Map<string, TopicStats>([["/input/foo", { numMessages: 1 }]]),
+          datatypes: new Map(Object.entries({ foo: { definitions: [] } })),
+          totalBytesReceived: 1234,
+        },
+      });
     });
 
-    act(() => result.current.setPublishers("test", [{ topic: "/studio/test", datatype: "test" }]));
-    expect(result.current.publishers).toEqual([{ topic: "/studio/test", datatype: "test" }]);
+    act(() => {
+      result.current.setSubscriptions("custom-id", [{ topic: "/input/foo" }]);
+    });
+    expect(result.current.subscriptions).toEqual([{ topic: "/input/foo" }]);
 
-    act(() => result.current.setPublishers("bar", [{ topic: "/studio/test2", datatype: "test2" }]));
-    expect(result.current.publishers).toEqual([
-      { topic: "/studio/test", datatype: "test" },
-      { topic: "/studio/test2", datatype: "test2" },
+    // Emit empty player state to process new subscriptions
+    await doubleAct(async () => {
+      await player.emit();
+    });
+
+    expect(result.current.messageEventsBySubscriberId.get("custom-id")).toEqual([
+      {
+        message: {
+          foo: "bar",
+        },
+        receiveTime: {
+          nsec: 0,
+          sec: 0,
+        },
+        schemaName: "foo",
+        sizeInBytes: 0,
+        topic: "/input/foo",
+      },
+    ]);
+    const player2 = new FakePlayer();
+    player2.playerId = "player2";
+    setPlayer(player2);
+    rerender();
+
+    // Unsubscribe and re-subscribe to trigger injection of old messages
+    act(() => {
+      result.current.setSubscriptions("custom-id", []);
+    });
+    act(() => {
+      result.current.setSubscriptions("custom-id", [{ topic: "/input/foo" }]);
+    });
+    expect(result.current.subscriptions).toEqual([{ topic: "/input/foo" }]);
+
+    await act(async () => {
+      await player2.emit({
+        activeData: {
+          messages: [],
+          currentTime: { sec: 0, nsec: 0 },
+          startTime: { sec: 0, nsec: 0 },
+          endTime: { sec: 1, nsec: 0 },
+          isPlaying: true,
+          speed: 0.2,
+          lastSeekTime: 1234,
+          topics: [],
+          topicStats: new Map(),
+          datatypes: new Map(),
+          totalBytesReceived: 1234,
+        },
+      });
+    });
+
+    expect(result.current.playerState.playerId).toEqual("player2");
+    expect(result.current.messageEventsBySubscriberId.get("custom-id")).toBeUndefined();
+  });
+
+  it("does not inject the last message when the player id changes", async () => {
+    const player = new FakePlayer();
+    const { Hook, Wrapper } = makeTestHook({ player });
+    const { result, rerender } = renderHook(Hook, { wrapper: Wrapper });
+    await doubleAct(async () => {
+      await player.emit({
+        activeData: {
+          messages: [
+            {
+              topic: "/input/foo",
+              receiveTime: { sec: 0, nsec: 0 },
+              message: { foo: "bar" },
+              schemaName: "foo",
+              sizeInBytes: 0,
+            },
+          ],
+          currentTime: { sec: 0, nsec: 0 },
+          startTime: { sec: 0, nsec: 0 },
+          endTime: { sec: 1, nsec: 0 },
+          isPlaying: true,
+          speed: 0.2,
+          lastSeekTime: 1234,
+          topics: [{ name: "/input/foo", schemaName: "foo" }],
+          topicStats: new Map<string, TopicStats>([["/input/foo", { numMessages: 1 }]]),
+          datatypes: new Map(Object.entries({ foo: { definitions: [] } })),
+          totalBytesReceived: 1234,
+        },
+      });
+    });
+
+    act(() => {
+      result.current.setSubscriptions("custom-id", [{ topic: "/input/foo" }]);
+    });
+    expect(result.current.subscriptions).toEqual([{ topic: "/input/foo" }]);
+
+    // Emit empty player state to process new subscriptions
+    await doubleAct(async () => {
+      await player.emit();
+    });
+
+    expect(result.current.messageEventsBySubscriberId.get("custom-id")).toEqual([
+      {
+        message: {
+          foo: "bar",
+        },
+        receiveTime: {
+          nsec: 0,
+          sec: 0,
+        },
+        schemaName: "foo",
+        sizeInBytes: 0,
+        topic: "/input/foo",
+      },
+    ]);
+    rerender();
+
+    // Unsubscribe and re-subscribe to trigger injection of old messages
+    act(() => {
+      result.current.setSubscriptions("custom-id", []);
+    });
+    act(() => {
+      result.current.setSubscriptions("custom-id", [{ topic: "/input/foo" }]);
+    });
+    expect(result.current.subscriptions).toEqual([{ topic: "/input/foo" }]);
+
+    await act(async () => {
+      await player.emit({
+        playerId: "player2",
+        activeData: {
+          messages: [],
+          currentTime: { sec: 0, nsec: 0 },
+          startTime: { sec: 0, nsec: 0 },
+          endTime: { sec: 1, nsec: 0 },
+          isPlaying: true,
+          speed: 0.2,
+          lastSeekTime: 1234,
+          topics: [],
+          topicStats: new Map(),
+          datatypes: new Map(),
+          totalBytesReceived: 1234,
+        },
+      });
+    });
+
+    expect(result.current.playerState.playerId).toEqual("player2");
+    expect(result.current.messageEventsBySubscriberId.get("custom-id")).toBeUndefined();
+  });
+
+  it("sets publishers", async () => {
+    const player = new FakePlayer();
+    const { Hook, Wrapper } = makeTestHook({ player });
+    const { result } = renderHook(Hook, { wrapper: Wrapper });
+
+    act(() => {
+      result.current.setPublishers("test", [{ topic: "/studio/test", schemaName: "test" }]);
+    });
+    expect(player.publishers).toEqual<typeof player.publishers>([
+      { topic: "/studio/test", schemaName: "test" },
     ]);
 
-    const lastPublishers = result.current.publishers;
+    act(() => {
+      result.current.setPublishers("bar", [{ topic: "/studio/test2", schemaName: "test2" }]);
+    });
+    expect(player.publishers).toEqual<typeof player.publishers>([
+      { topic: "/studio/test", schemaName: "test" },
+      { topic: "/studio/test2", schemaName: "test2" },
+    ]);
+
+    const lastPublishers = player.publishers;
     // cause the player to emit a frame outside the render loop to trigger another render
-    await act(async () => await player.emit());
+    await doubleAct(async () => {
+      await player.emit();
+    });
     // make sure publishers are reference equal when they don't change
-    expect(result.current.publishers).toBe(lastPublishers);
+    expect(player.publishers).toBe(lastPublishers);
   });
 
   it("renders with the same callback functions every time", async () => {
     const player = new FakePlayer();
+    const { Hook, Wrapper } = makeTestHook({ player });
     const { result } = renderHook(Hook, {
       wrapper: Wrapper,
-      initialProps: { player },
     });
 
     const lastContext = result.current;
-    await act(async () => await player.emit());
+    await doubleAct(async () => {
+      await player.emit();
+    });
     for (const [key, value] of Object.entries(result.current)) {
       if (typeof value === "function") {
         expect((lastContext as Record<string, unknown>)[key]).toBe(value);
@@ -256,19 +619,23 @@ describe("MessagePipelineProvider/useMessagePipeline", () => {
 
   it("resolves listener promise after each render", async () => {
     const player = new FakePlayer();
-    const { result } = renderHook(Hook, {
+    const { Hook, Wrapper, all } = makeTestHook({ player });
+    renderHook(Hook, {
       wrapper: Wrapper,
-      initialProps: { player },
     });
 
     // once for the initialization message
-    expect(result.all.length).toBe(1);
+    expect(all.length).toBe(1);
     // Now wait for the player state emit cycle to complete.
     // This promise should resolve when the render loop finishes.
-    await act(async () => await player.emit());
-    expect(result.all.length).toBe(2);
-    await act(async () => await player.emit());
-    expect(result.all.length).toBe(3);
+    await doubleAct(async () => {
+      await player.emit();
+    });
+    expect(all.length).toBe(2);
+    await doubleAct(async () => {
+      await player.emit();
+    });
+    expect(all.length).toBe(3);
   });
 
   it("proxies player methods to player, accounting for capabilities", async () => {
@@ -277,9 +644,9 @@ describe("MessagePipelineProvider/useMessagePipeline", () => {
     jest.spyOn(player, "pausePlayback");
     jest.spyOn(player, "setPlaybackSpeed");
     jest.spyOn(player, "seekPlayback");
+    const { Hook, Wrapper } = makeTestHook({ player });
     const { result } = renderHook(Hook, {
       wrapper: Wrapper,
-      initialProps: { player },
     });
 
     expect(result.current.startPlayback).toBeUndefined();
@@ -289,7 +656,9 @@ describe("MessagePipelineProvider/useMessagePipeline", () => {
 
     player.setCapabilities([PlayerCapabilities.playbackControl]);
 
-    await act(async () => await player.emit());
+    await doubleAct(async () => {
+      await player.emit();
+    });
 
     expect(result.current.startPlayback).not.toBeUndefined();
     expect(result.current.pausePlayback).not.toBeUndefined();
@@ -308,7 +677,9 @@ describe("MessagePipelineProvider/useMessagePipeline", () => {
 
     player.setCapabilities([PlayerCapabilities.playbackControl, PlayerCapabilities.setSpeed]);
 
-    await act(async () => await player.emit());
+    await doubleAct(async () => {
+      await player.emit();
+    });
     expect(player.setPlaybackSpeed).toHaveBeenCalledTimes(0);
     result.current.setPlaybackSpeed!(0.5);
     expect(player.setPlaybackSpeed).toHaveBeenCalledWith(0.5);
@@ -317,72 +688,18 @@ describe("MessagePipelineProvider/useMessagePipeline", () => {
   it("closes player on unmount", () => {
     const player = new FakePlayer();
     jest.spyOn(player, "close");
+    const { Hook, Wrapper } = makeTestHook({ player });
     const { unmount } = renderHook(Hook, {
       wrapper: Wrapper,
-      initialProps: { player },
     });
 
     unmount();
     expect(player.close).toHaveBeenCalledTimes(1);
   });
 
-  describe("when changing the player", () => {
-    let player: FakePlayer;
-    let player2: FakePlayer;
-    let result: RenderResult<MessagePipelineContext>;
-    beforeEach(async () => {
-      player = new FakePlayer();
-      player.playerId = "fake player 1";
-      jest.spyOn(player, "close");
-      let rerender;
-      ({ result, rerender } = renderHook(Hook, {
-        wrapper: Wrapper,
-        initialProps: { player },
-      }));
-
-      await act(async () => await player.emit());
-      expect(result.all.length).toBe(2); // eslint-disable-line jest/no-standalone-expect
-
-      player2 = new FakePlayer();
-      player2.playerId = "fake player 2";
-      rerender({ player: player2 });
-      expect(player.close).toHaveBeenCalledTimes(1); // eslint-disable-line jest/no-standalone-expect
-      expect(result.all.length).toBe(4); // eslint-disable-line jest/no-standalone-expect
-    });
-
-    it("closes old player when new player is supplied and stops old player message flow", async () => {
-      await act(async () => await player2.emit());
-      expect(result.all.length).toBe(5);
-      await act(async () => await player.emit());
-      expect(result.all.length).toBe(5);
-      expect(
-        result.all.map((ctx) => {
-          if (ctx instanceof Error) {
-            throw ctx;
-          }
-          return ctx.playerState.playerId;
-        }),
-      ).toEqual(["", "fake player 1", "fake player 1", "", "fake player 2"]);
-    });
-
-    it("does not think the old player is the new player if it emits first", async () => {
-      await act(async () => await player.emit());
-      expect(result.all.length).toBe(4);
-      await act(async () => await player2.emit());
-      expect(result.all.length).toBe(5);
-      expect(
-        result.all.map((ctx) => {
-          if (ctx instanceof Error) {
-            throw ctx;
-          }
-          return ctx.playerState.playerId;
-        }),
-      ).toEqual(["", "fake player 1", "fake player 1", "", "fake player 2"]);
-    });
-  });
-
   it("does not throw when interacting w/ context and player is missing", () => {
     expect(() => {
+      const { Hook, Wrapper } = makeTestHook({});
       const { result } = renderHook(Hook, { wrapper: Wrapper });
       expect(result.current.startPlayback).toBeUndefined();
       expect(result.current.pausePlayback).toBeUndefined();
@@ -392,33 +709,15 @@ describe("MessagePipelineProvider/useMessagePipeline", () => {
     }).not.toThrow();
   });
 
-  it("transfers subscriptions and publishers between players", async () => {
-    const player = new FakePlayer();
-    const { result, rerender } = renderHook(Hook, {
-      wrapper: Wrapper,
-      initialProps: { player },
-    });
-    act(() => result.current.setSubscriptions("test", [{ topic: "/studio/test" }]));
-    act(() => result.current.setSubscriptions("bar", [{ topic: "/studio/test2" }]));
-    act(() => result.current.setPublishers("test", [{ topic: "/studio/test", datatype: "test" }]));
-
-    const player2 = new FakePlayer();
-    rerender({ player: player2 });
-    expect(player2.subscriptions).toEqual([{ topic: "/studio/test" }, { topic: "/studio/test2" }]);
-    expect(player2.publishers).toEqual([{ topic: "/studio/test", datatype: "test" }]);
-  });
-
   describe("pauseFrame", () => {
     it("frames automatically resolve without calling pauseFrame", async () => {
       let hasFinishedFrame = false;
       const player = new FakePlayer();
-      renderHook(Hook, {
-        wrapper: Wrapper,
-        initialProps: { player },
-      });
+      const { Hook, Wrapper } = makeTestHook({ player });
+      renderHook(Hook, { wrapper: Wrapper });
 
-      await act(async () => {
-        return await player.emit().then(() => {
+      await doubleAct(async () => {
+        await player.emit().then(() => {
           hasFinishedFrame = true;
         });
       });
@@ -429,10 +728,8 @@ describe("MessagePipelineProvider/useMessagePipeline", () => {
     it("when pausing for multiple promises, waits for all of them to resolve", async () => {
       // Start by pausing twice.
       const player = new FakePlayer();
-      const { result } = renderHook(Hook, {
-        wrapper: Wrapper,
-        initialProps: { player },
-      });
+      const { Hook, Wrapper } = makeTestHook({ player });
+      const { result } = renderHook(Hook, { wrapper: Wrapper });
       const resumeFunctions = [
         result.current.pauseFrame(""),
         result.current.pauseFrame(""),
@@ -463,10 +760,8 @@ describe("MessagePipelineProvider/useMessagePipeline", () => {
     it("can wait for promises multiple frames in a row", async () => {
       expect.assertions(8);
       const player = new FakePlayer();
-      const { result } = renderHook(Hook, {
-        wrapper: Wrapper,
-        initialProps: { player },
-      });
+      const { Hook, Wrapper } = makeTestHook({ player });
+      const { result } = renderHook(Hook, { wrapper: Wrapper });
       async function runSingleFrame({ shouldPause }: { shouldPause: boolean }) {
         let resumeFn;
         if (shouldPause) {
@@ -500,10 +795,8 @@ describe("MessagePipelineProvider/useMessagePipeline", () => {
 
     it("Adding a promise that is previously resolved just plays through", async () => {
       const player = new FakePlayer();
-      const { result } = renderHook(Hook, {
-        wrapper: Wrapper,
-        initialProps: { player },
-      });
+      const { Hook, Wrapper } = makeTestHook({ player });
+      const { result } = renderHook(Hook, { wrapper: Wrapper });
 
       // Pause the current frame, but immediately resume it before we actually emit.
       const resumeFn = result.current.pauseFrame("");
@@ -525,10 +818,8 @@ describe("MessagePipelineProvider/useMessagePipeline", () => {
 
     it("Adding a promise that does not resolve eventually results in an error, and then continues playing", async () => {
       const player = new FakePlayer();
-      const { result } = renderHook(Hook, {
-        wrapper: Wrapper,
-        initialProps: { player },
-      });
+      const { Hook, Wrapper } = makeTestHook({ player });
+      const { result } = renderHook(Hook, { wrapper: Wrapper });
       // Pause the current frame.
       result.current.pauseFrame("");
 
@@ -548,10 +839,8 @@ describe("MessagePipelineProvider/useMessagePipeline", () => {
 
     it("Adding multiple promises that do not resolve eventually results in an error, and then continues playing", async () => {
       const player = new FakePlayer();
-      const { result } = renderHook(Hook, {
-        wrapper: Wrapper,
-        initialProps: { player },
-      });
+      const { Hook, Wrapper } = makeTestHook({ player });
+      const { result } = renderHook(Hook, { wrapper: Wrapper });
 
       // Pause the current frame twice.
       result.current.pauseFrame("");
@@ -573,10 +862,8 @@ describe("MessagePipelineProvider/useMessagePipeline", () => {
 
     it("does not accidentally resolve the second player's promise when replacing the player", async () => {
       const player = new FakePlayer();
-      const { result, rerender } = renderHook(Hook, {
-        wrapper: Wrapper,
-        initialProps: { player },
-      });
+      const { Hook, Wrapper, setPlayer } = makeTestHook({ player });
+      const { result, rerender } = renderHook(Hook, { wrapper: Wrapper });
       // Pause the current frame.
       const firstPlayerResumeFn = result.current.pauseFrame("");
 
@@ -586,7 +873,8 @@ describe("MessagePipelineProvider/useMessagePipeline", () => {
 
       // Replace the player.
       const newPlayer = new FakePlayer();
-      rerender({ player: newPlayer });
+      setPlayer(newPlayer);
+      rerender();
       await delay(20);
 
       const secondPlayerResumeFn = result.current.pauseFrame("");

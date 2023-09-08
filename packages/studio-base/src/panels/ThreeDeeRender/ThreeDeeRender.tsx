@@ -2,318 +2,324 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
-import produce from "immer";
-// eslint-disable-next-line no-restricted-imports
-import { isEqual, cloneDeep, merge, get, set } from "lodash";
-import React, { useCallback, useLayoutEffect, useEffect, useState, useMemo, useRef } from "react";
+import { produce } from "immer";
+import { cloneDeep, isEqual, merge } from "lodash";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ReactDOM from "react-dom";
-import { useResizeDetector } from "react-resize-detector";
+import { useLatest } from "react-use";
 import { DeepPartial } from "ts-essentials";
 import { useDebouncedCallback } from "use-debounce";
 
 import Logger from "@foxglove/log";
+import { Time, toNanoSec } from "@foxglove/rostime";
 import {
-  CameraListener,
-  CameraState,
-  CameraStore,
-  DEFAULT_CAMERA_STATE,
-} from "@foxglove/regl-worldview";
-import { toNanoSec } from "@foxglove/rostime";
-import { PanelExtensionContext, RenderState, Topic, MessageEvent } from "@foxglove/studio";
-import {
-  EXPERIMENTAL_PanelExtensionContextWithSettings,
+  Immutable,
+  LayoutActions,
+  MessageEvent,
+  ParameterValue,
+  RenderState,
   SettingsTreeAction,
-} from "@foxglove/studio-base/components/SettingsTreeEditor/types";
-import useCleanup from "@foxglove/studio-base/hooks/useCleanup";
+  SettingsTreeNodes,
+  Subscription,
+  Topic,
+} from "@foxglove/studio";
+import { AppSetting } from "@foxglove/studio-base/AppSetting";
+import { BuiltinPanelExtensionContext } from "@foxglove/studio-base/components/PanelExtensionAdapter";
+import { ALL_SUPPORTED_IMAGE_SCHEMAS } from "@foxglove/studio-base/panels/ThreeDeeRender/renderables/ImageMode/ImageMode";
+import { ALL_SUPPORTED_ANNOTATION_SCHEMAS } from "@foxglove/studio-base/panels/ThreeDeeRender/renderables/ImageMode/annotations/ImageAnnotations";
+import ThemeProvider from "@foxglove/studio-base/theme/ThemeProvider";
 
-import { DebugGui } from "./DebugGui";
-import { NodeError } from "./LayerErrors";
+import type {
+  FollowMode,
+  IRenderer,
+  ImageModeConfig,
+  RendererConfig,
+  RendererEvents,
+  RendererSubscription,
+} from "./IRenderer";
+import type { PickedRenderable } from "./Picker";
+import { SELECTED_ID_VARIABLE } from "./Renderable";
 import { Renderer } from "./Renderer";
 import { RendererContext, useRendererEvent } from "./RendererContext";
-import { Stats } from "./Stats";
+import { RendererOverlay } from "./RendererOverlay";
+import { CameraState, DEFAULT_CAMERA_STATE } from "./camera";
 import {
-  normalizeCameraInfo,
-  normalizeCompressedImage,
-  normalizeImage,
-  normalizeMarker,
-  normalizePoseStamped,
-  normalizePoseWithCovarianceStamped,
-} from "./normalizeMessages";
-import {
-  CAMERA_INFO_DATATYPES,
-  CameraInfo,
-  COMPRESSED_IMAGE_DATATYPES,
-  CompressedImage,
-  IMAGE_DATATYPES,
-  Image,
-  MARKER_ARRAY_DATATYPES,
-  MARKER_DATATYPES,
-  Marker,
-  MarkerArray,
-  OCCUPANCY_GRID_DATATYPES,
-  OccupancyGrid,
-  POINTCLOUD_DATATYPES,
-  PointCloud2,
-  POSE_STAMPED_DATATYPES,
-  POSE_WITH_COVARIANCE_STAMPED_DATATYPES,
-  PoseStamped,
-  PoseWithCovarianceStamped,
-  TF_DATATYPES,
-  TF,
-  TRANSFORM_STAMPED_DATATYPES,
-  Header,
-} from "./ros";
-import {
-  buildSettingsTree,
-  LayerSettings,
-  LayerSettingsImage,
-  LayerType,
-  SelectEntry,
-  SettingsTreeOptions,
-  SUPPORTED_DATATYPES,
-  ThreeDeeRenderConfig,
-} from "./settings";
-
-const SHOW_DEBUG: true | false = false;
-const DEFAULT_FRAME_IDS = ["base_link", "odom", "map", "earth"];
+  PublishRos1Datatypes,
+  PublishRos2Datatypes,
+  makePointMessage,
+  makePoseEstimateMessage,
+  makePoseMessage,
+} from "./publish";
+import type { LayerSettingsTransform } from "./renderables/FrameAxes";
+import { PublishClickEvent } from "./renderables/PublishClickTool";
+import { DEFAULT_PUBLISH_SETTINGS } from "./renderables/PublishSettings";
+import { InterfaceMode } from "./types";
 
 const log = Logger.getLogger(__filename);
 
-function RendererOverlay(props: { enableStats: boolean }): JSX.Element {
-  const [_, setSelectedRenderable] = useState<THREE.Object3D | undefined>(undefined);
+type Shared3DPanelState = {
+  cameraState: CameraState;
+  followMode: FollowMode;
+  followTf: undefined | string;
+};
 
-  useRendererEvent("renderableSelected", (renderable) => setSelectedRenderable(renderable));
+const PANEL_STYLE: React.CSSProperties = {
+  width: "100%",
+  height: "100%",
+  display: "flex",
+  position: "relative",
+};
 
-  const stats = props.enableStats ? (
-    <div id="stats" style={{ position: "absolute", top: 0 }}>
-      <Stats />
-    </div>
-  ) : undefined;
+function useRendererProperty<K extends keyof IRenderer>(
+  renderer: IRenderer | undefined,
+  key: K,
+  event: keyof RendererEvents,
+  fallback: () => IRenderer[K],
+): IRenderer[K] {
+  const [value, setValue] = useState<IRenderer[K]>(() => renderer?.[key] ?? fallback());
+  useEffect(() => {
+    if (!renderer) {
+      return;
+    }
+    const onChange = () => {
+      setValue(() => renderer[key]);
+    };
+    onChange();
 
-  const debug = SHOW_DEBUG ? (
-    <div id="debug" style={{ position: "absolute", top: 60 }}>
-      <DebugGui />
-    </div>
-  ) : undefined;
-
-  return (
-    <React.Fragment>
-      {stats}
-      {debug}
-    </React.Fragment>
-  );
+    renderer.addListener(event, onChange);
+    return () => {
+      renderer.removeListener(event, onChange);
+    };
+  }, [renderer, event, key]);
+  return value;
 }
 
-export function ThreeDeeRender({ context }: { context: PanelExtensionContext }): JSX.Element {
-  const { initialState, saveState } = context;
+/**
+ * A panel that renders a 3D scene. This is a thin wrapper around a `Renderer` instance.
+ */
+export function ThreeDeeRender(props: {
+  context: BuiltinPanelExtensionContext;
+  interfaceMode: InterfaceMode;
+  /** Override default downloading behavior, used for Storybook */
+  onDownloadImage?: (blob: Blob, fileName: string) => void;
+  /** Enable hitmap debugging by default, used for picking stories */
+  debugPicking?: boolean;
+}): JSX.Element {
+  const { context, interfaceMode, onDownloadImage, debugPicking } = props;
+  const { initialState, saveState, unstable_fetchAsset: fetchAsset } = context;
 
   // Load and save the persisted panel configuration
-  const [config, setConfig] = useState<ThreeDeeRenderConfig>(() => {
-    const partialConfig = initialState as DeepPartial<ThreeDeeRenderConfig> | undefined;
+  const [config, setConfig] = useState<Immutable<RendererConfig>>(() => {
+    const partialConfig = initialState as DeepPartial<RendererConfig> | undefined;
+
+    // Initialize the camera from default settings overlaid with persisted settings
     const cameraState: CameraState = merge(
       cloneDeep(DEFAULT_CAMERA_STATE),
       partialConfig?.cameraState,
     );
+    const publish = merge(cloneDeep(DEFAULT_PUBLISH_SETTINGS), partialConfig?.publish);
+
+    const transforms = (partialConfig?.transforms ?? {}) as Record<
+      string,
+      Partial<LayerSettingsTransform>
+    >;
 
     return {
       cameraState,
+      followMode: partialConfig?.followMode ?? "follow-pose",
       followTf: partialConfig?.followTf,
       scene: partialConfig?.scene ?? {},
-      transforms: {},
+      transforms,
       topics: partialConfig?.topics ?? {},
+      layers: partialConfig?.layers ?? {},
+      publish,
+      // deep partial on config, makes gradient tuple type [string | undefined, string | undefined]
+      // which is incompatible with `Partial<ColorModeSettings>`
+      imageMode: (partialConfig?.imageMode ?? {}) as Partial<ImageModeConfig>,
     };
   });
-  const configRef = useRef(config);
-  const { cameraState, followTf: configFollowTf } = config;
+  const configRef = useLatest(config);
+  const { cameraState } = config;
   const backgroundColor = config.scene.backgroundColor;
 
   const [canvas, setCanvas] = useState<HTMLCanvasElement | ReactNull>(ReactNull);
-  const [renderer, setRenderer] = useState<Renderer | ReactNull>(ReactNull);
-  useEffect(
-    () => setRenderer(canvas ? new Renderer(canvas, configRef.current) : ReactNull),
-    [canvas],
-  );
+  const [renderer, setRenderer] = useState<IRenderer | undefined>(undefined);
+  const rendererRef = useRef<IRenderer | undefined>(undefined);
+  useEffect(() => {
+    const newRenderer = canvas
+      ? new Renderer({ canvas, config: configRef.current, interfaceMode, fetchAsset, debugPicking })
+      : undefined;
+    setRenderer(newRenderer);
+    rendererRef.current = newRenderer;
+    return () => {
+      rendererRef.current?.dispose();
+      rendererRef.current = undefined;
+    };
+  }, [
+    canvas,
+    configRef,
+    config.scene.transforms?.enablePreloading,
+    interfaceMode,
+    fetchAsset,
+    debugPicking,
+  ]);
+
+  useEffect(() => {
+    context.EXPERIMENTAL_setMessagePathDropConfig({
+      getDropStatus(path) {
+        if (interfaceMode !== "image") {
+          return { canDrop: false };
+        }
+        if (!path.isTopic || path.rootSchemaName == undefined) {
+          return { canDrop: false };
+        }
+        if (ALL_SUPPORTED_IMAGE_SCHEMAS.has(path.rootSchemaName)) {
+          return { canDrop: true, effect: "replace" };
+        }
+        if (ALL_SUPPORTED_ANNOTATION_SCHEMAS.has(path.rootSchemaName)) {
+          return { canDrop: true, effect: "add" };
+        }
+        return { canDrop: false };
+      },
+      handleDrop(path) {
+        setConfig((prevConfig) =>
+          produce(prevConfig, (draft) => {
+            if (path.rootSchemaName == undefined) {
+              return;
+            }
+            if (ALL_SUPPORTED_IMAGE_SCHEMAS.has(path.rootSchemaName)) {
+              draft.imageMode.imageTopic = path.path;
+            } else {
+              draft.imageMode.annotations ??= {};
+              draft.imageMode.annotations[path.path] ??= {};
+              draft.imageMode.annotations[path.path]!.visible = true;
+            }
+          }),
+        );
+      },
+    });
+  }, [context, interfaceMode]);
 
   const [colorScheme, setColorScheme] = useState<"dark" | "light" | undefined>();
+  const [timezone, setTimezone] = useState<string | undefined>();
   const [topics, setTopics] = useState<ReadonlyArray<Topic> | undefined>();
-  const [messages, setMessages] = useState<ReadonlyArray<MessageEvent<unknown>> | undefined>();
-  const [currentTime, setCurrentTime] = useState<bigint | undefined>();
+  const [parameters, setParameters] = useState<
+    Immutable<Map<string, ParameterValue>> | undefined
+  >();
+  const [currentFrameMessages, setCurrentFrameMessages] = useState<
+    ReadonlyArray<MessageEvent> | undefined
+  >();
+  const [currentTime, setCurrentTime] = useState<Time | undefined>();
+  const [didSeek, setDidSeek] = useState<boolean>(false);
+  const [sharedPanelState, setSharedPanelState] = useState<undefined | Shared3DPanelState>();
+  const [allFrames, setAllFrames] = useState<readonly MessageEvent[] | undefined>(undefined);
 
   const renderRef = useRef({ needsRender: false });
   const [renderDone, setRenderDone] = useState<(() => void) | undefined>();
 
+  const schemaHandlers = useRendererProperty(
+    renderer,
+    "schemaHandlers",
+    "schemaHandlersChanged",
+    () => new Map(),
+  );
+  const topicHandlers = useRendererProperty(
+    renderer,
+    "topicHandlers",
+    "topicHandlersChanged",
+    () => new Map(),
+  );
+
   // Config cameraState
-  const setCameraState = useCallback((state: CameraState) => {
-    setConfig((prevConfig) => ({ ...prevConfig, cameraState: state }));
-  }, []);
-  const [cameraStore] = useState(() => new CameraStore(setCameraState, cameraState));
+  useEffect(() => {
+    const listener = () => {
+      if (renderer) {
+        const newCameraState = renderer.getCameraState();
+        if (!newCameraState) {
+          return;
+        }
+        // This needs to be before `setConfig` otherwise flickering will occur during
+        // non-follow mode playback
+        renderer.setCameraState(newCameraState);
+        setConfig((prevConfig) => ({ ...prevConfig, cameraState: newCameraState }));
 
-  // Build a map from topic name to datatype
-  const topicsToDatatypes = useMemo(() => {
-    const map = new Map<string, string>();
-    if (!topics) {
-      return map;
-    }
-    for (const topic of topics) {
-      map.set(topic.name, topic.datatype);
-    }
-    return map;
-  }, [topics]);
-
-  // Build a map from (renderable) topic name to LayerType enum
-  const topicsToLayerTypes = useMemo(() => buildTopicsToLayerTypes(topics), [topics]);
+        if (config.scene.syncCamera === true) {
+          context.setSharedPanelState({
+            cameraState: newCameraState,
+            followMode: config.followMode,
+            followTf: renderer.followFrameId,
+          });
+        }
+      }
+    };
+    renderer?.addListener("cameraMove", listener);
+    return () => void renderer?.removeListener("cameraMove", listener);
+  }, [config.scene.syncCamera, config.followMode, context, renderer?.followFrameId, renderer]);
 
   // Handle user changes in the settings sidebar
   const actionHandler = useCallback(
     (action: SettingsTreeAction) => {
-      if (action.action !== "update") {
-        return;
-      }
-
-      setConfig((oldConfig) => {
-        const newConfig = produce(oldConfig, (draft) => {
-          set(draft, action.payload.path, action.payload.value);
-        });
-
+      // Wrapping in unstable_batchedUpdates causes React to run effects _after_ the handleAction
+      // function has finished executing. This allows scene extensions that call
+      // renderer.updateConfig to read out the new config value and configure their renderables
+      // before the render occurs.
+      ReactDOM.unstable_batchedUpdates(() => {
         if (renderer) {
-          const basePath = action.payload.path[0];
-          if (basePath === "transforms") {
-            // A transform setting was changed, inform the renderer about it and
-            // draw a new frame
-            const frameId = action.payload.path[1]!;
-            const transformConfig = newConfig.transforms[frameId];
-            if (transformConfig) {
-              renderer.setTransformSettings(frameId, transformConfig);
-              renderRef.current.needsRender = true;
-            }
-          } else if (basePath === "topics") {
-            // A topic setting was changed, inform the renderer about it and
-            // draw a new frame
-            const topic = action.payload.path[1]!;
-            const layerType = topicsToLayerTypes.get(topic);
-            if (layerType != undefined) {
-              updateTopicSettings(renderer, topic, layerType, newConfig);
-              renderRef.current.needsRender = true;
-            }
+          const initialCameraState = renderer.getCameraState();
+          renderer.settings.handleAction(action);
+          const updatedCameraState = renderer.getCameraState();
+          // Communicate camera changes from settings to the global state if syncing.
+          if (updatedCameraState !== initialCameraState && config.scene.syncCamera === true) {
+            context.setSharedPanelState({
+              cameraState: updatedCameraState,
+              followMode: config.followMode,
+              followTf: renderer.followFrameId,
+            });
           }
         }
-
-        return newConfig;
       });
     },
-    [renderer, topicsToLayerTypes],
+    [config.followMode, config.scene.syncCamera, context, renderer],
   );
 
-  // Handle internal changes to the settings sidebar
-  useRendererEvent(
-    "settingsTreeChange",
-    (update) => {
-      setConfig((oldConfig) => {
-        const newConfig = produce(oldConfig, (draft) => {
-          const entry = get(renderer?.config ?? draft, update.path);
-          set(draft, update.path, { ...entry });
-        });
+  // Maintain the settings tree
+  const [settingsTree, setSettingsTree] = useState<SettingsTreeNodes | undefined>(undefined);
+  const updateSettingsTree = useCallback((curRenderer: IRenderer) => {
+    setSettingsTree(curRenderer.settings.tree());
+  }, []);
+  useRendererEvent("settingsTreeChange", updateSettingsTree, renderer);
 
-        return newConfig;
-      });
+  // Save the panel configuration when it changes
+  const updateConfig = useCallback((curRenderer: IRenderer) => {
+    setConfig(curRenderer.config);
+  }, []);
+  useRendererEvent("configChange", updateConfig, renderer);
+
+  // Write to a global variable when the current selection changes
+  const updateSelectedRenderable = useCallback(
+    (selection: PickedRenderable | undefined) => {
+      const id = selection?.renderable.idFromMessage();
+      const customVariable = selection?.renderable.selectedIdVariable();
+      if (customVariable) {
+        context.setVariable(customVariable, id);
+      }
+      context.setVariable(SELECTED_ID_VARIABLE, id);
     },
-    renderer,
+    [context],
   );
+  useRendererEvent("selectedRenderable", updateSelectedRenderable, renderer);
 
-  // Maintain a list of coordinate frames for the settings sidebar
-  const [coordinateFrames, setCoordinateFrames] = useState<SelectEntry[]>(
-    coordinateFrameList(renderer),
-  );
-  // Maintain a tree of settings node errors
-  const [layerErrors, setLayerErrors] = useState<NodeError>(new NodeError([]));
-  const [defaultFrame, setDefaultFrame] = useState<string | undefined>(undefined);
-  const updateCoordinateFrames = useCallback(
-    (curRenderer: Renderer) => {
-      setCoordinateFrames(coordinateFrameList(curRenderer));
-
-      // Prefer frames from [REP-105](https://www.ros.org/reps/rep-0105.html)
-      for (const frameId of DEFAULT_FRAME_IDS) {
-        if (curRenderer.transformTree.hasFrame(frameId)) {
-          setDefaultFrame(frameId);
-          return;
-        }
-      }
-
-      // Choose the root frame with the most children
-      const rootsToCounts = new Map<string, number>();
-      for (const frame of curRenderer.transformTree.frames().values()) {
-        const rootId = frame.root().id;
-        rootsToCounts.set(rootId, (rootsToCounts.get(rootId) ?? 0) + 1);
-      }
-      const rootsArray = Array.from(rootsToCounts.entries());
-      const rootId = rootsArray.sort((a, b) => b[1] - a[1])[0]?.[0];
-      if (rootId != undefined) {
-        setDefaultFrame(rootId);
-      }
-    },
-    [setDefaultFrame],
-  );
-  const updateLayerErrors = useCallback(
-    (_: unknown, __: unknown, ___: unknown, curRenderer: Renderer) =>
-      setLayerErrors(curRenderer.layerErrors.errors.clone()),
-    [],
-  );
+  // Rebuild the settings sidebar tree as needed
   useEffect(() => {
-    renderer?.addListener("transformTreeUpdated", updateCoordinateFrames);
-    renderer?.addListener("layerErrorUpdate", updateLayerErrors);
-    return () => void renderer?.removeListener("transformTreeUpdated", updateCoordinateFrames);
-  }, [renderer, updateCoordinateFrames, updateLayerErrors]);
-
-  // Set the rendering frame (aka followTf) based on the configured frame, falling back to a
-  // heuristically chosen best frame for the current scene (defaultFrame)
-  const followTf = useMemo(
-    () =>
-      configFollowTf != undefined && renderer && renderer.transformTree.hasFrame(configFollowTf)
-        ? configFollowTf
-        : defaultFrame,
-    [configFollowTf, defaultFrame, renderer],
-  );
-
-  const settingsNodeProviders = renderer?.settingsNodeProviders;
-
-  const throttledUpdatePanelSettingsTree = useDebouncedCallback(
-    (handler: (action: SettingsTreeAction) => void, options: SettingsTreeOptions) => {
-      // eslint-disable-next-line no-underscore-dangle
-      (
-        context as unknown as EXPERIMENTAL_PanelExtensionContextWithSettings
-      ).__updatePanelSettingsTree({
-        actionHandler: handler,
-        roots: buildSettingsTree(options),
-      });
-    },
-    250,
-    { leading: true, trailing: true, maxWait: 250 },
-  );
-
-  useEffect(() => {
-    throttledUpdatePanelSettingsTree(actionHandler, {
-      config,
-      coordinateFrames,
-      layerErrors,
-      followTf,
-      topics: topics ?? [],
-      topicsToLayerTypes,
-      settingsNodeProviders: settingsNodeProviders ?? new Map(),
+    context.updatePanelSettingsEditor({
+      actionHandler,
+      enableFilter: true,
+      nodes: settingsTree ?? {},
     });
-  }, [
-    actionHandler,
-    config,
-    context,
-    coordinateFrames,
-    followTf,
-    layerErrors,
-    settingsNodeProviders,
-    throttledUpdatePanelSettingsTree,
-    topics,
-    topicsToLayerTypes,
-  ]);
+  }, [actionHandler, context, settingsTree]);
 
-  // Update the renderer's reference to `config` when it changes
+  // Update the renderer's reference to `config` when it changes. Note that this does *not*
+  // automatically update the settings tree.
   useEffect(() => {
     if (renderer) {
       renderer.config = config;
@@ -321,124 +327,198 @@ export function ThreeDeeRender({ context }: { context: PanelExtensionContext }):
     }
   }, [config, renderer]);
 
-  // Update renderer and draw a new frame when followTf changes
+  // Update the renderer's reference to `topics` when it changes
   useEffect(() => {
-    if (renderer?.config && followTf != undefined) {
-      renderer.renderFrameId = followTf;
+    if (renderer) {
+      renderer.setTopics(topics);
       renderRef.current.needsRender = true;
     }
-  }, [followTf, renderer]);
+  }, [topics, renderer]);
+
+  // Tell the renderer if we are connected to a ROS data source
+  useEffect(() => {
+    if (renderer) {
+      renderer.ros = context.dataSourceProfile === "ros1" || context.dataSourceProfile === "ros2";
+    }
+  }, [context.dataSourceProfile, renderer]);
 
   // Save panel settings whenever they change
   const throttledSave = useDebouncedCallback(
-    (newConfig: ThreeDeeRenderConfig) => saveState(newConfig),
+    (newConfig: Immutable<RendererConfig>) => {
+      saveState(newConfig);
+    },
     1000,
     { leading: false, trailing: true, maxWait: 1000 },
   );
   useEffect(() => throttledSave(config), [config, throttledSave]);
 
-  // Dispose of the renderer (and associated GPU resources) on teardown
-  useCleanup(() => renderer?.dispose());
+  // Keep default panel title up to date with selected image topic in image mode
+  useEffect(() => {
+    if (interfaceMode === "image") {
+      context.setDefaultPanelTitle(config.imageMode.imageTopic);
+    }
+  }, [interfaceMode, context, config.imageMode.imageTopic]);
 
-  // We use a layout effect to setup render handling for our panel. We also setup some topic subscriptions.
+  // Establish a connection to the message pipeline with context.watch and context.onRender
   useLayoutEffect(() => {
-    // The render handler is run by the broader studio system during playback when your panel
-    // needs to render because the fields it is watching have changed. How you handle rendering depends on your framework.
-    // You can only setup one render handler - usually early on in setting up your panel.
-    //
-    // Without a render handler your panel will never receive updates.
-    //
-    // The render handler could be invoked as often as 60hz during playback if fields are changing often.
-    context.onRender = (renderState: RenderState, done) => {
+    context.onRender = (renderState: Immutable<RenderState>, done) => {
       ReactDOM.unstable_batchedUpdates(() => {
         if (renderState.currentTime) {
-          setCurrentTime(toNanoSec(renderState.currentTime));
+          setCurrentTime(renderState.currentTime);
         }
 
-        // render functions receive a _done_ callback. You MUST call this callback to indicate your panel has finished rendering.
-        // Your panel will not receive another render callback until _done_ is called from a prior render. If your panel is not done
-        // rendering before the next render call, studio shows a notification to the user that your panel is delayed.
-        //
+        // Check if didSeek is set to true to reset the preloadedMessageTime and
+        // trigger a state flush in Renderer
+        if (renderState.didSeek === true) {
+          setDidSeek(true);
+        }
+
         // Set the done callback into a state variable to trigger a re-render
-        setRenderDone(done);
+        setRenderDone(() => done);
 
         // Keep UI elements and the renderer aware of the current color scheme
         setColorScheme(renderState.colorScheme);
+        if (renderState.appSettings) {
+          const tz = renderState.appSettings.get(AppSetting.TIMEZONE);
+          setTimezone(typeof tz === "string" ? tz : undefined);
+        }
 
-        // We may have new topics - since we are also watching for messages in the current frame, topics may not have changed
-        // It is up to you to determine the correct action when state has not changed
+        // We may have new topics - since we are also watching for messages in
+        // the current frame, topics may not have changed
         setTopics(renderState.topics);
 
+        setSharedPanelState(renderState.sharedPanelState as Shared3DPanelState);
+
+        // Watch for any changes in the map of observed parameters
+        setParameters(renderState.parameters);
+
         // currentFrame has messages on subscribed topics since the last render call
-        if (renderState.currentFrame) {
-          // Fully parse lazy messages
-          for (const messageEvent of renderState.currentFrame) {
-            const maybeLazy = messageEvent.message as { toJSON?: () => unknown };
-            if ("toJSON" in maybeLazy) {
-              (messageEvent as { message: unknown }).message = maybeLazy.toJSON!();
-            }
-          }
-        }
-        setMessages(renderState.currentFrame);
+        deepParseMessageEvents(renderState.currentFrame);
+        setCurrentFrameMessages(renderState.currentFrame);
+
+        // allFrames has messages on preloaded topics across all frames (as they are loaded)
+        deepParseMessageEvents(renderState.allFrames);
+        setAllFrames(renderState.allFrames);
       });
     };
 
-    context.watch("currentTime");
+    context.watch("allFrames");
     context.watch("colorScheme");
-    context.watch("topics");
     context.watch("currentFrame");
-  }, [context]);
+    context.watch("currentTime");
+    context.watch("didSeek");
+    context.watch("parameters");
+    context.watch("sharedPanelState");
+    context.watch("topics");
+    context.watch("appSettings");
+    context.subscribeAppSettings([AppSetting.TIMEZONE]);
+  }, [context, renderer]);
 
   // Build a list of topics to subscribe to
-  const [topicsToSubscribe, setTopicsToSubscribe] = useState<string[] | undefined>(undefined);
+  const [topicsToSubscribe, setTopicsToSubscribe] = useState<Subscription[] | undefined>(undefined);
   useEffect(() => {
-    const subscriptions = new Set<string>();
     if (!topics) {
       setTopicsToSubscribe(undefined);
       return;
     }
 
+    const newSubscriptions: Subscription[] = [];
+
+    const addSubscription = (
+      topic: Topic,
+      rendererSubscription: RendererSubscription,
+      convertTo?: string,
+    ) => {
+      let shouldSubscribe = rendererSubscription.shouldSubscribe?.(topic.name);
+      if (shouldSubscribe == undefined) {
+        if (config.topics[topic.name]?.visible === true) {
+          shouldSubscribe = true;
+        } else if (config.imageMode.annotations?.[topic.name]?.visible === true) {
+          shouldSubscribe = true;
+        } else {
+          shouldSubscribe = false;
+        }
+      }
+      if (shouldSubscribe) {
+        newSubscriptions.push({
+          topic: topic.name,
+          preload: rendererSubscription.preload,
+          convertTo,
+        });
+      }
+    };
+
     for (const topic of topics) {
-      // Subscribe to all transform topics
-      if (TF_DATATYPES.has(topic.datatype) || TRANSFORM_STAMPED_DATATYPES.has(topic.datatype)) {
-        subscriptions.add(topic.name);
-      } else if (SUPPORTED_DATATYPES.has(topic.datatype)) {
-        // Subscribe to known datatypes if the topic has not been toggled off
-        const topicConfig = config.topics[topic.name] as Partial<LayerSettings> | undefined;
-        if (topicConfig?.visible !== false) {
-          subscriptions.add(topic.name);
+      for (const rendererSubscription of topicHandlers.get(topic.name) ?? []) {
+        addSubscription(topic, rendererSubscription);
+      }
+      for (const rendererSubscription of schemaHandlers.get(topic.schemaName) ?? []) {
+        addSubscription(topic, rendererSubscription);
+      }
+      for (const schemaName of topic.convertibleTo ?? []) {
+        for (const rendererSubscription of schemaHandlers.get(schemaName) ?? []) {
+          addSubscription(topic, rendererSubscription, schemaName);
         }
       }
     }
 
-    // For camera imge topics, subscribe to their corresponding sensor_msgs/CameraInfo topic
-    for (const configEntry of Object.values(config.topics)) {
-      const topicConfig = configEntry as Partial<LayerSettingsImage> | undefined;
-      if (topicConfig?.visible !== false && topicConfig?.cameraInfoTopic != undefined) {
-        subscriptions.add(topicConfig.cameraInfoTopic);
-      }
-    }
-
-    const newTopics = Array.from(subscriptions.keys()).sort();
-    setTopicsToSubscribe((prevTopics) => (isEqual(prevTopics, newTopics) ? prevTopics : newTopics));
-  }, [topics, config.topics]);
+    // Sort the list to make comparisons stable
+    newSubscriptions.sort((a, b) => a.topic.localeCompare(b.topic));
+    setTopicsToSubscribe((prev) => (isEqual(prev, newSubscriptions) ? prev : newSubscriptions));
+  }, [
+    topics,
+    config.topics,
+    // Need to update subscriptions when imagemode topics change
+    // shouldSubscribe values will be re-evaluated
+    config.imageMode.calibrationTopic,
+    config.imageMode.imageTopic,
+    schemaHandlers,
+    topicHandlers,
+    config.imageMode.annotations,
+    // Need to update subscriptions when layers change as URDF layers might subscribe to topics
+    // shouldSubscribe values will be re-evaluated
+    config.layers,
+  ]);
 
   // Notify the extension context when our subscription list changes
   useEffect(() => {
     if (!topicsToSubscribe) {
       return;
     }
-    log.debug(`Subscribing to [${topicsToSubscribe.join(", ")}]`);
+    log.debug(`Subscribing to [${topicsToSubscribe.map((t) => JSON.stringify(t)).join(", ")}]`);
     context.subscribe(topicsToSubscribe);
   }, [context, topicsToSubscribe]);
 
-  // Keep the renderer currentTime up to date
+  // Keep the renderer parameters up to date
   useEffect(() => {
-    if (renderer && currentTime != undefined) {
-      renderer.currentTime = currentTime;
-      renderRef.current.needsRender = true;
+    if (renderer) {
+      renderer.setParameters(parameters);
     }
-  }, [currentTime, renderer]);
+  }, [parameters, renderer]);
+
+  // Keep the renderer currentTime up to date and handle seeking
+  useEffect(() => {
+    const newTimeNs = currentTime ? toNanoSec(currentTime) : undefined;
+
+    /*
+     * NOTE AROUND SEEK HANDLING
+     * Seeking MUST be handled even if there is no change in current time.  When there is a subscription
+     * change while paused, the player goes into `seek-backfill` which sets didSeek to true.
+     *
+     * We cannot early return here when there is no change in current time due to that, otherwise it would
+     * handle seek next time the current time changes and clear the backfilled messages and transforms.
+     */
+    if (!renderer || newTimeNs == undefined) {
+      return;
+    }
+    const oldTimeNs = renderer.currentTime;
+
+    renderer.setCurrentTime(newTimeNs);
+    if (didSeek) {
+      renderer.handleSeek(oldTimeNs);
+      setDidSeek(false);
+    }
+  }, [currentTime, renderer, didSeek]);
 
   // Keep the renderer colorScheme and backgroundColor up to date
   useEffect(() => {
@@ -448,90 +528,74 @@ export function ThreeDeeRender({ context }: { context: PanelExtensionContext }):
     }
   }, [backgroundColor, colorScheme, renderer]);
 
+  // Handle preloaded messages and render a frame if new messages are available
+  // Should be called before `messages` is handled
+  useEffect(() => {
+    // we want didseek to be handled by the renderer first so that transforms aren't cleared after the cursor has been brought up
+    if (!renderer || !currentTime) {
+      return;
+    }
+    const newMessagesHandled = renderer.handleAllFramesMessages(allFrames);
+    if (newMessagesHandled) {
+      renderRef.current.needsRender = true;
+    }
+  }, [renderer, currentTime, allFrames]);
+
   // Handle messages and render a frame if new messages are available
   useEffect(() => {
-    if (!renderer || !messages) {
+    if (!renderer || !currentFrameMessages) {
       return;
     }
 
-    for (const message of messages) {
-      const datatype = topicsToDatatypes.get(message.topic);
-      if (!datatype) {
-        continue;
-      }
-
-      // If this message has a Header, scrape the frame_id from it
-      const frameId = (message.message as Partial<{ header: Header }>).header?.frame_id;
-      if (frameId != undefined && !renderer.transformTree.hasFrame(frameId)) {
-        renderer.transformTree.getOrCreateFrame(frameId);
-        log.debug(`Added coordinate frame "${frameId}"`);
-        renderer.emit("transformTreeUpdated", renderer);
-        renderer.addCoordinateFrame(frameId);
-      }
-
-      if (TF_DATATYPES.has(datatype)) {
-        // tf2_msgs/TFMessage - Ingest the list of transforms into our TF tree
-        const tfMessage = message.message as { transforms: TF[] };
-        for (const tf of tfMessage.transforms) {
-          renderer.addTransformMessage(tf);
-        }
-      } else if (TRANSFORM_STAMPED_DATATYPES.has(datatype)) {
-        // geometry_msgs/TransformStamped - Ingest this single transform into our TF tree
-        const tf = message.message as TF;
-        renderer.addTransformMessage(tf);
-      } else if (MARKER_ARRAY_DATATYPES.has(datatype)) {
-        // visualization_msgs/MarkerArray - Ingest the list of markers
-        const markerArray = message.message as DeepPartial<MarkerArray>;
-        for (const markerMsg of markerArray.markers ?? []) {
-          const marker = normalizeMarker(markerMsg);
-          renderer.addMarkerMessage(message.topic, marker);
-        }
-      } else if (MARKER_DATATYPES.has(datatype)) {
-        // visualization_msgs/Marker - Ingest this single marker
-        const marker = normalizeMarker(message.message as DeepPartial<Marker>);
-        renderer.addMarkerMessage(message.topic, marker);
-      } else if (OCCUPANCY_GRID_DATATYPES.has(datatype)) {
-        // nav_msgs/OccupancyGrid - Ingest this occupancy grid
-        const occupancyGrid = message.message as OccupancyGrid;
-        renderer.addOccupancyGridMessage(message.topic, occupancyGrid);
-      } else if (POINTCLOUD_DATATYPES.has(datatype)) {
-        // sensor_msgs/PointCloud2 - Ingest this point cloud
-        const pointCloud = message.message as PointCloud2;
-        renderer.addPointCloud2Message(message.topic, pointCloud);
-      } else if (POSE_STAMPED_DATATYPES.has(datatype)) {
-        const poseMesage = normalizePoseStamped(message.message as DeepPartial<PoseStamped>);
-        renderer.addPoseMessage(message.topic, poseMesage);
-      } else if (POSE_WITH_COVARIANCE_STAMPED_DATATYPES.has(datatype)) {
-        const poseMessage = normalizePoseWithCovarianceStamped(
-          message.message as DeepPartial<PoseWithCovarianceStamped>,
-        );
-        renderer.addPoseMessage(message.topic, poseMessage);
-      } else if (CAMERA_INFO_DATATYPES.has(datatype)) {
-        const cameraInfo = normalizeCameraInfo(message.message as DeepPartial<CameraInfo>);
-        renderer.addCameraInfoMessage(message.topic, cameraInfo);
-      } else if (IMAGE_DATATYPES.has(datatype)) {
-        const image = normalizeImage(message.message as DeepPartial<Image>);
-        renderer.addImageMessage(message.topic, image);
-      } else if (COMPRESSED_IMAGE_DATATYPES.has(datatype)) {
-        const compressedImage = normalizeCompressedImage(
-          message.message as DeepPartial<CompressedImage>,
-        );
-        renderer.addImageMessage(message.topic, compressedImage);
-      }
+    for (const message of currentFrameMessages) {
+      renderer.addMessageEvent(message);
     }
 
     renderRef.current.needsRender = true;
-  }, [messages, renderer, topicsToDatatypes]);
+  }, [currentFrameMessages, renderer]);
 
   // Update the renderer when the camera moves
   useEffect(() => {
-    cameraStore.setCameraState(cameraState);
-    renderer?.setCameraState(cameraState);
-    renderRef.current.needsRender = true;
-  }, [cameraState, cameraStore, renderer]);
+    if (!isEqual(cameraState, renderer?.getCameraState())) {
+      renderer?.setCameraState(cameraState);
+      renderRef.current.needsRender = true;
+    }
+  }, [cameraState, renderer]);
 
+  // Sync camera with shared state, if enabled.
   useEffect(() => {
-    // Render a new frame if requested
+    if (!renderer || sharedPanelState == undefined || config.scene.syncCamera !== true) {
+      return;
+    }
+
+    if (sharedPanelState.followMode !== config.followMode) {
+      renderer.setCameraSyncError(
+        `Follow mode must be ${sharedPanelState.followMode} to sync camera.`,
+      );
+    } else if (sharedPanelState.followTf !== renderer.followFrameId) {
+      renderer.setCameraSyncError(
+        `Display frame must be ${sharedPanelState.followTf} to sync camera.`,
+      );
+    } else {
+      const newCameraState = sharedPanelState.cameraState;
+      renderer.setCameraState(newCameraState);
+      renderRef.current.needsRender = true;
+      setConfig((prevConfig) => ({
+        ...prevConfig,
+        cameraState: newCameraState,
+      }));
+      renderer.setCameraSyncError(undefined);
+    }
+  }, [
+    config.scene.syncCamera,
+    config.followMode,
+    renderer,
+    renderer?.followFrameId,
+    sharedPanelState,
+  ]);
+
+  // Render a new frame if requested
+  useEffect(() => {
     if (renderer && renderRef.current.needsRender) {
       renderer.animationFrame();
       renderRef.current.needsRender = false;
@@ -543,158 +607,225 @@ export function ThreeDeeRender({ context }: { context: PanelExtensionContext }):
     renderDone?.();
   }, [renderDone]);
 
-  // Use a debounce and 0 refresh rate to avoid triggering a resize observation while handling
-  // an existing resize observation.
-  // https://github.com/maslianok/react-resize-detector/issues/45
-  const {
-    ref: resizeRef,
-    width,
-    height,
-  } = useResizeDetector({
-    refreshRate: 0,
-    refreshMode: "debounce",
-  });
-  return (
-    <div
-      style={{ width: "100%", height: "100%", display: "flex", position: "relative" }}
-      ref={resizeRef}
-    >
-      <CameraListener cameraStore={cameraStore} shiftKeys={true}>
-        <div
-          // This element forces CameraListener to fill its container. We need this instead of just
-          // the canvas since three.js manages the size of the canvas element and we use position:absolute.
-          style={{ width, height }}
-        />
-        <canvas ref={setCanvas} style={{ position: "absolute", top: 0, left: 0 }} />
-      </CameraListener>
-      <RendererContext.Provider value={renderer}>
-        <RendererOverlay enableStats={config.scene.enableStats ?? true} />
-      </RendererContext.Provider>
-    </div>
-  );
-}
-
-function coordinateFrameList(renderer: Renderer | ReactNull | undefined): SelectEntry[] {
-  if (!renderer) {
-    return [];
-  }
-
-  type FrameEntry = { id: string; children: FrameEntry[] };
-
-  const frames = Array.from(renderer.transformTree.frames().values());
-  const frameMap = new Map<string, FrameEntry>(
-    frames.map((frame) => [frame.id, { id: frame.id, children: [] }]),
+  // Create a useCallback wrapper for adding a new panel to the layout, used to open the
+  // "Raw Messages" panel from the object inspector
+  const addPanel = useCallback(
+    (params: Parameters<LayoutActions["addPanel"]>[0]) => {
+      context.layout.addPanel(params);
+    },
+    [context.layout],
   );
 
-  // Create a hierarchy of coordinate frames
-  const rootFrames: FrameEntry[] = [];
-  for (const frame of frames) {
-    const frameEntry = frameMap.get(frame.id)!;
-    const parentId = frame.parent()?.id;
-    if (parentId == undefined) {
-      rootFrames.push(frameEntry);
+  const [measureActive, setMeasureActive] = useState(false);
+  useEffect(() => {
+    const onStart = () => {
+      setMeasureActive(true);
+    };
+    const onEnd = () => {
+      setMeasureActive(false);
+    };
+    renderer?.measurementTool.addEventListener("foxglove.measure-start", onStart);
+    renderer?.measurementTool.addEventListener("foxglove.measure-end", onEnd);
+    return () => {
+      renderer?.measurementTool.removeEventListener("foxglove.measure-start", onStart);
+      renderer?.measurementTool.removeEventListener("foxglove.measure-end", onEnd);
+    };
+  }, [renderer?.measurementTool]);
+
+  const onClickMeasure = useCallback(() => {
+    if (measureActive) {
+      renderer?.measurementTool.stopMeasuring();
     } else {
-      const parent = frameMap.get(parentId);
-      if (parent == undefined) {
-        continue;
-      }
-      parent.children.push(frameEntry);
+      renderer?.measurementTool.startMeasuring();
+      renderer?.publishClickTool.stop();
     }
-  }
+  }, [measureActive, renderer]);
 
-  // Convert the `rootFrames` hierarchy into a flat list of coordinate frames with depth
-  const output: SelectEntry[] = [];
+  const [publishActive, setPublishActive] = useState(false);
+  useEffect(() => {
+    if (renderer?.publishClickTool.publishClickType !== config.publish.type) {
+      renderer?.publishClickTool.setPublishClickType(config.publish.type);
+      // stop if we changed types while a publish action was already in progress
+      renderer?.publishClickTool.stop();
+    }
+  }, [config.publish.type, renderer]);
 
-  function addFrame(frame: FrameEntry, depth: number) {
-    const frameName =
-      frame.id === "" || frame.id.startsWith(" ") || frame.id.endsWith(" ")
-        ? `"${frame.id}"`
-        : frame.id;
-    output.push({
-      value: frame.id,
-      label: `${"\u00A0\u00A0".repeat(depth)}${frameName}`,
+  const publishTopics = useMemo(() => {
+    return {
+      goal: config.publish.poseTopic,
+      point: config.publish.pointTopic,
+      pose: config.publish.poseEstimateTopic,
+    };
+  }, [config.publish.poseTopic, config.publish.pointTopic, config.publish.poseEstimateTopic]);
+
+  useEffect(() => {
+    const datatypes =
+      context.dataSourceProfile === "ros2" ? PublishRos2Datatypes : PublishRos1Datatypes;
+    context.advertise?.(publishTopics.goal, "geometry_msgs/PoseStamped", { datatypes });
+    context.advertise?.(publishTopics.point, "geometry_msgs/PointStamped", { datatypes });
+    context.advertise?.(publishTopics.pose, "geometry_msgs/PoseWithCovarianceStamped", {
+      datatypes,
     });
-    frame.children.sort((a, b) => a.id.localeCompare(b.id));
-    for (const child of frame.children) {
-      addFrame(child, depth + 1);
-    }
-  }
 
-  rootFrames.sort((a, b) => a.id.localeCompare(b.id));
-  for (const entry of rootFrames) {
-    addFrame(entry, 0);
-  }
+    return () => {
+      context.unadvertise?.(publishTopics.goal);
+      context.unadvertise?.(publishTopics.point);
+      context.unadvertise?.(publishTopics.pose);
+    };
+  }, [publishTopics, context, context.dataSourceProfile]);
 
-  return output;
-}
+  const latestPublishConfig = useLatest(config.publish);
 
-function buildTopicsToLayerTypes(topics: ReadonlyArray<Topic> | undefined): Map<string, LayerType> {
-  const map = new Map<string, LayerType>();
-  if (!topics) {
-    return map;
-  }
-  for (const topic of topics) {
-    const datatype = topic.datatype;
-    if (SUPPORTED_DATATYPES.has(datatype)) {
-      if (TF_DATATYPES.has(datatype) || TRANSFORM_STAMPED_DATATYPES.has(datatype)) {
-        map.set(topic.name, LayerType.Transform);
-      } else if (MARKER_DATATYPES.has(datatype) || MARKER_ARRAY_DATATYPES.has(datatype)) {
-        map.set(topic.name, LayerType.Marker);
-      } else if (OCCUPANCY_GRID_DATATYPES.has(datatype)) {
-        map.set(topic.name, LayerType.OccupancyGrid);
-      } else if (POINTCLOUD_DATATYPES.has(datatype)) {
-        map.set(topic.name, LayerType.PointCloud);
-      } else if (
-        POSE_STAMPED_DATATYPES.has(datatype) ||
-        POSE_WITH_COVARIANCE_STAMPED_DATATYPES.has(datatype)
-      ) {
-        map.set(topic.name, LayerType.Pose);
-      } else if (CAMERA_INFO_DATATYPES.has(datatype)) {
-        map.set(topic.name, LayerType.CameraInfo);
-      } else if (IMAGE_DATATYPES.has(datatype) || COMPRESSED_IMAGE_DATATYPES.has(datatype)) {
-        map.set(topic.name, LayerType.Image);
+  useEffect(() => {
+    const onStart = () => {
+      setPublishActive(true);
+    };
+    const onSubmit = (event: PublishClickEvent & { type: "foxglove.publish-submit" }) => {
+      const frameId = renderer?.followFrameId;
+      if (frameId == undefined) {
+        log.warn("Unable to publish, renderFrameId is not set");
+        return;
       }
+      if (!context.publish) {
+        log.error("Data source does not support publishing");
+        return;
+      }
+      if (context.dataSourceProfile !== "ros1" && context.dataSourceProfile !== "ros2") {
+        log.warn("Publishing is only supported in ros1 and ros2");
+        return;
+      }
+
+      try {
+        switch (event.publishClickType) {
+          case "point": {
+            const message = makePointMessage(event.point, frameId);
+            context.publish(publishTopics.point, message);
+            break;
+          }
+          case "pose": {
+            const message = makePoseMessage(event.pose, frameId);
+            context.publish(publishTopics.goal, message);
+            break;
+          }
+          case "pose_estimate": {
+            const message = makePoseEstimateMessage(
+              event.pose,
+              frameId,
+              latestPublishConfig.current.poseEstimateXDeviation,
+              latestPublishConfig.current.poseEstimateYDeviation,
+              latestPublishConfig.current.poseEstimateThetaDeviation,
+            );
+            context.publish(publishTopics.pose, message);
+            break;
+          }
+        }
+      } catch (error) {
+        log.info(error);
+      }
+    };
+    const onEnd = () => {
+      setPublishActive(false);
+    };
+    renderer?.publishClickTool.addEventListener("foxglove.publish-start", onStart);
+    renderer?.publishClickTool.addEventListener("foxglove.publish-submit", onSubmit);
+    renderer?.publishClickTool.addEventListener("foxglove.publish-end", onEnd);
+    return () => {
+      renderer?.publishClickTool.removeEventListener("foxglove.publish-start", onStart);
+      renderer?.publishClickTool.removeEventListener("foxglove.publish-submit", onSubmit);
+      renderer?.publishClickTool.removeEventListener("foxglove.publish-end", onEnd);
+    };
+  }, [
+    context,
+    latestPublishConfig,
+    publishTopics,
+    renderer?.followFrameId,
+    renderer?.publishClickTool,
+  ]);
+
+  const onClickPublish = useCallback(() => {
+    if (publishActive) {
+      renderer?.publishClickTool.stop();
+    } else {
+      renderer?.publishClickTool.start();
+      renderer?.measurementTool.stopMeasuring();
     }
-  }
-  return map;
+  }, [publishActive, renderer]);
+
+  const onTogglePerspective = useCallback(() => {
+    const currentState = renderer?.getCameraState()?.perspective ?? false;
+    actionHandler({
+      action: "update",
+      payload: {
+        input: "boolean",
+        path: ["cameraState", "perspective"],
+        value: !currentState,
+      },
+    });
+  }, [actionHandler, renderer]);
+
+  const onKeyDown = useCallback(
+    (event: React.KeyboardEvent) => {
+      if (event.key === "3") {
+        onTogglePerspective();
+        event.stopPropagation();
+        event.preventDefault();
+      }
+    },
+    [onTogglePerspective],
+  );
+
+  // The 3d panel only supports publishing to ros1 and ros2 data sources
+  const isRosDataSource =
+    context.dataSourceProfile === "ros1" || context.dataSourceProfile === "ros2";
+  const canPublish = context.publish != undefined && isRosDataSource;
+
+  return (
+    <ThemeProvider isDark={colorScheme === "dark"}>
+      <div style={PANEL_STYLE} onKeyDown={onKeyDown}>
+        <canvas
+          ref={setCanvas}
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            ...((measureActive || publishActive) && { cursor: "crosshair" }),
+          }}
+        />
+        <RendererContext.Provider value={renderer}>
+          <RendererOverlay
+            interfaceMode={interfaceMode}
+            canvas={canvas}
+            addPanel={addPanel}
+            enableStats={config.scene.enableStats ?? false}
+            perspective={config.cameraState.perspective}
+            onTogglePerspective={onTogglePerspective}
+            measureActive={measureActive}
+            onClickMeasure={onClickMeasure}
+            canPublish={canPublish}
+            publishActive={publishActive}
+            onClickPublish={onClickPublish}
+            publishClickType={renderer?.publishClickTool.publishClickType ?? "point"}
+            onChangePublishClickType={(type) => {
+              renderer?.publishClickTool.setPublishClickType(type);
+              renderer?.publishClickTool.start();
+            }}
+            timezone={timezone}
+            onDownloadImage={onDownloadImage}
+          />
+        </RendererContext.Provider>
+      </div>
+    </ThemeProvider>
+  );
 }
 
-function updateTopicSettings(
-  renderer: Renderer,
-  topic: string,
-  layerType: LayerType,
-  config: ThreeDeeRenderConfig,
-) {
-  const topicConfig = config.topics[topic] as Partial<LayerSettings> | undefined;
-  if (!topicConfig) {
+function deepParseMessageEvents(messageEvents: ReadonlyArray<MessageEvent> | undefined): void {
+  if (!messageEvents) {
     return;
   }
-
-  // If visibility is toggled off for this topic, clear its topic errors
-  if (topicConfig.visible === false) {
-    renderer.layerErrors.clearTopic(topic);
-  }
-
-  switch (layerType) {
-    case LayerType.Transform:
-      throw new Error(`Attempted to update topic settings for Transform "${topic}"`);
-    case LayerType.Marker:
-      renderer.setMarkerSettings(topic, topicConfig);
-      break;
-    case LayerType.OccupancyGrid:
-      renderer.setOccupancyGridSettings(topic, topicConfig);
-      break;
-    case LayerType.PointCloud:
-      renderer.setPointCloud2Settings(topic, topicConfig);
-      break;
-    case LayerType.Pose:
-      renderer.setPoseSettings(topic, topicConfig);
-      break;
-    case LayerType.CameraInfo:
-      renderer.setCameraInfoSettings(topic, topicConfig);
-      break;
-    case LayerType.Image:
-      renderer.setImageSettings(topic, topicConfig);
-      break;
+  for (const messageEvent of messageEvents) {
+    const maybeLazy = messageEvent.message as { toJSON?: () => unknown };
+    if ("toJSON" in maybeLazy) {
+      (messageEvent as { message: unknown }).message = maybeLazy.toJSON!();
+    }
   }
 }

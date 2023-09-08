@@ -62,10 +62,10 @@ const nestedTabLayoutFixture: Fixture = {
           layout: {
             first: "Global!A",
             second: {
-              first: "ImageViewPanel!A",
+              first: "Foo!A",
               second: {
-                first: "ImageViewPanel!B",
-                second: "ImageViewPanel!C",
+                first: "Foo!B",
+                second: "Foo!C",
                 direction: "row",
                 splitPercentage: 50,
               },
@@ -106,7 +106,7 @@ const nestedTabLayoutFixture2: Fixture = {
   layout: {
     direction: "row",
     splitPercentage: 20,
-    first: "Plot!1",
+    first: "Sample1",
     second: {
       direction: "row",
       splitPercentage: 20,

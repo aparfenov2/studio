@@ -9,6 +9,7 @@ export enum AppSetting {
   TIME_FORMAT = "time.format",
   MESSAGE_RATE = "messageRate",
   UPDATES_ENABLED = "updates.enabled",
+  LANGUAGE = "language",
 
   // ROS
   ROS_PACKAGE_PATH = "ros.ros_package_path",
@@ -18,22 +19,14 @@ export enum AppSetting {
   CRASH_REPORTING_ENABLED = "telemetry.crashReportingEnabled",
 
   // Experimental features
-  UNLIMITED_MEMORY_CACHE = "experimental.unlimited-memory-cache",
   SHOW_DEBUG_PANELS = "showDebugPanels",
-  EXPERIMENTAL_3D_PANEL = "experimental.3d-panel",
-  ENABLE_LEGACY_PLOT_PANEL = "enableLegacyPlotPanel",
-  EXPERIMENTAL_BAG_PLAYER = "experimental.bag-player",
-  EXPERIMENTAL_DATA_PLATFORM_PLAYER = "experimental.data-platform-player",
-  EXPERIMENTAL_MCAP_PLAYER = "experimental.mcap-player",
-  EXPERIMENTAL_MESSAGE_ORDER = "experimental.message-order",
 
   // Miscellaneous
   HIDE_SIGN_IN_PROMPT = "hideSignInPrompt",
   LAUNCH_PREFERENCE = "launchPreference",
-  OPEN_DIALOG = "ui.open-dialog",
   SHOW_OPEN_DIALOG_ON_STARTUP = "ui.open-dialog-startup",
 
   // Dev only
   ENABLE_LAYOUT_DEBUGGING = "enableLayoutDebugging",
-  ENABLE_REACT_STRICT_MODE = "enableReactStrictMode",
+  ENABLE_MEMORY_USE_INDICATOR = "dev.memory-use-indicator",
 }

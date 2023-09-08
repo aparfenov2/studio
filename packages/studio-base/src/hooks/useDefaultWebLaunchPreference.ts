@@ -4,12 +4,13 @@
 
 import { useEffect } from "react";
 
+import { useSessionStorageValue } from "@foxglove/hooks";
 import { AppSetting } from "@foxglove/studio-base/AppSetting";
 import {
   MessagePipelineContext,
   useMessagePipeline,
 } from "@foxglove/studio-base/components/MessagePipeline";
-import { useSessionStorageValue } from "@foxglove/studio-base/hooks/useSessionStorageValue";
+import { LaunchPreferenceValue } from "@foxglove/studio-base/types/LaunchPreferenceValue";
 import isDesktopApp from "@foxglove/studio-base/util/isDesktopApp";
 
 const selectHasUrlState = (ctx: MessagePipelineContext) => ctx.playerState.urlState != undefined;
@@ -29,7 +30,7 @@ export function useDefaultWebLaunchPreference(): void {
     }
 
     if (hasUrlState && !launchPreference) {
-      setLaunchPreference("web");
+      setLaunchPreference(LaunchPreferenceValue.WEB);
     }
   }, [launchPreference, setLaunchPreference, hasUrlState]);
 }

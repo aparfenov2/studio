@@ -9,35 +9,31 @@ import {
   FormControl,
   Grid,
   Input,
-  InputLabel,
+  FormLabel,
   MenuItem,
   OutlinedInput,
   Select,
   TextField,
-  Theme,
+  useTheme,
 } from "@mui/material";
-import { makeStyles } from "@mui/styles";
+import { StoryObj } from "@storybook/react";
+
+import Stack from "@foxglove/studio-base/components/Stack";
 
 export default {
   title: "MUI Components",
 };
 
-const useStyles = makeStyles((theme: Theme) => ({
-  root: {
-    display: "flex",
-    flexDirection: "column",
-    padding: theme.spacing(2),
-    height: "100%",
-    width: "100%",
-    backgroundColor: theme.palette.background.paper,
-    gap: theme.spacing(2),
-  },
-}));
-
 function FormElements(): JSX.Element {
-  const classes = useStyles();
+  const theme = useTheme();
   return (
-    <div className={classes.root}>
+    <Stack
+      fullHeight
+      fullWidth
+      padding={2}
+      gap={2}
+      style={{ backgroundColor: theme.palette.background.paper }}
+    >
       <Grid container spacing={2} alignItems="flex-end">
         <Grid item>
           <TextField autoFocus label="Text Field (outlined)" variant="outlined" />
@@ -153,7 +149,7 @@ function FormElements(): JSX.Element {
       <Grid container spacing={2} alignItems="flex-end">
         <Grid item>
           <FormControl>
-            <InputLabel id="demo-simple-select-label">Select</InputLabel>
+            <FormLabel id="demo-simple-select-label">Select</FormLabel>
             <Select labelId="demo-simple-select-label" id="demo-simple-select" value={30}>
               <MenuItem value={10}>ROS1</MenuItem>
               <MenuItem value={20}>ROS2</MenuItem>
@@ -164,7 +160,7 @@ function FormElements(): JSX.Element {
         </Grid>
         <Grid item>
           <FormControl>
-            <InputLabel id="demo-simple-select-label">Select</InputLabel>
+            <FormLabel id="demo-simple-select-label">Select</FormLabel>
             <Select
               variant="filled"
               labelId="demo-simple-select-label"
@@ -180,7 +176,7 @@ function FormElements(): JSX.Element {
         </Grid>
         <Grid item>
           <FormControl>
-            <InputLabel id="demo-simple-select-label">Select</InputLabel>
+            <FormLabel id="demo-simple-select-label">Select</FormLabel>
             <Select
               variant="standard"
               labelId="demo-simple-select-label"
@@ -199,7 +195,7 @@ function FormElements(): JSX.Element {
       <Grid container spacing={2} alignItems="flex-end">
         <Grid item>
           <FormControl>
-            <InputLabel id="demo-simple-select-label">Select</InputLabel>
+            <FormLabel id="demo-simple-select-label">Select</FormLabel>
             <Select
               startAdornment={<VisibilityIcon />}
               labelId="demo-simple-select-label"
@@ -215,7 +211,7 @@ function FormElements(): JSX.Element {
         </Grid>
         <Grid item>
           <FormControl>
-            <InputLabel id="demo-simple-select-label">Select</InputLabel>
+            <FormLabel id="demo-simple-select-label">Select</FormLabel>
             <Select
               startAdornment={<VisibilityIcon />}
               variant="filled"
@@ -232,7 +228,7 @@ function FormElements(): JSX.Element {
         </Grid>
         <Grid item>
           <FormControl>
-            <InputLabel id="demo-simple-select-label">Select</InputLabel>
+            <FormLabel id="demo-simple-select-label">Select</FormLabel>
             <Select
               startAdornment={<VisibilityIcon />}
               variant="standard"
@@ -252,7 +248,7 @@ function FormElements(): JSX.Element {
       <Grid container spacing={2} alignItems="flex-end">
         <Grid item>
           <FormControl size="small">
-            <InputLabel id="demo-simple-select-label">Select</InputLabel>
+            <FormLabel id="demo-simple-select-label">Select</FormLabel>
             <Select labelId="demo-simple-select-label" id="demo-simple-select" value={30}>
               <MenuItem value={10}>ROS1</MenuItem>
               <MenuItem value={20}>ROS2</MenuItem>
@@ -263,7 +259,7 @@ function FormElements(): JSX.Element {
         </Grid>
         <Grid item>
           <FormControl size="small">
-            <InputLabel id="demo-simple-select-label">Select</InputLabel>
+            <FormLabel id="demo-simple-select-label">Select</FormLabel>
             <Select
               variant="filled"
               labelId="demo-simple-select-label"
@@ -279,7 +275,7 @@ function FormElements(): JSX.Element {
         </Grid>
         <Grid item>
           <FormControl size="small">
-            <InputLabel id="demo-simple-select-label">Select</InputLabel>
+            <FormLabel id="demo-simple-select-label">Select</FormLabel>
             <Select
               variant="standard"
               labelId="demo-simple-select-label"
@@ -298,7 +294,7 @@ function FormElements(): JSX.Element {
       <Grid container spacing={2} alignItems="flex-end">
         <Grid item>
           <FormControl size="small">
-            <InputLabel id="demo-simple-select-label">Select</InputLabel>
+            <FormLabel id="demo-simple-select-label">Select</FormLabel>
             <Select
               startAdornment={<VisibilityIcon />}
               labelId="demo-simple-select-label"
@@ -314,7 +310,7 @@ function FormElements(): JSX.Element {
         </Grid>
         <Grid item>
           <FormControl size="small">
-            <InputLabel id="demo-simple-select-label">Select</InputLabel>
+            <FormLabel id="demo-simple-select-label">Select</FormLabel>
             <Select
               variant="filled"
               startAdornment={<VisibilityIcon />}
@@ -331,7 +327,7 @@ function FormElements(): JSX.Element {
         </Grid>
         <Grid item>
           <FormControl size="small">
-            <InputLabel id="demo-simple-select-label">Select</InputLabel>
+            <FormLabel id="demo-simple-select-label">Select</FormLabel>
             <Select
               startAdornment={<VisibilityIcon />}
               variant="standard"
@@ -347,12 +343,16 @@ function FormElements(): JSX.Element {
           </FormControl>
         </Grid>
       </Grid>
-    </div>
+    </Stack>
   );
 }
 
-export const FormElementsDark = (): JSX.Element => FormElements();
-FormElementsDark.parameters = { colorScheme: "dark" };
+export const FormElementsDark: StoryObj = {
+  render: FormElements,
+  parameters: { colorScheme: "dark" },
+};
 
-export const FormElementsLight = (): JSX.Element => FormElements();
-FormElementsLight.parameters = { colorScheme: "light" };
+export const FormElementsLight: StoryObj = {
+  render: FormElements,
+  parameters: { colorScheme: "light" },
+};

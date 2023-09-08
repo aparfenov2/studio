@@ -13,17 +13,24 @@ ignorePatterns:
 
 plugins:
   - file-progress
+  - tss-unused-classes
+  - "@foxglove/eslint-plugin-studio"
 
 extends:
   - plugin:@foxglove/base
   - plugin:@foxglove/react
   - plugin:@foxglove/jest
+  - plugin:storybook/recommended
 
 settings:
   import/internal-regex: "^@foxglove"
 
 rules:
   "@foxglove/license-header": error
+  "@foxglove/prefer-hash-private": error
+  "@foxglove/studio/link-target": error
+
+  tss-unused-classes/unused-classes: error
 
   # show progress while linting
   file-progress/activate: warn
@@ -44,27 +51,52 @@ rules:
   react-hooks/exhaustive-deps:
     - error
     - additionalHooks: "(useAsync(?!AppConfigurationValue))|useCallbackWithToast"
+  react/jsx-curly-brace-presence: [error, never]
 
   # The _sx_ property is slow
   # https://stackoverflow.com/questions/68383046/is-there-a-performance-difference-between-the-sx-prop-and-the-makestyles-function
   react/forbid-component-props:
-    - warn
+    - error
     - forbid:
         - propName: "sx"
           message: "Use of the sx prop is not advised due to performance issues. Consider using alternative styling methods instead."
 
   no-warning-comments:
     - error
-    - terms: ["fixme", "xxx"]
+    - terms: ["fixme", "xxx", "todo"]
       location: anywhere
 
   no-restricted-imports:
     - error
     - paths:
-        - name: lodash
+        - name: "@emotion/styled"
+          importNames: [styled]
+          message: "@emotion/styled has performance implications. Use tss-react/mui instead."
+
+        - name: "@mui/material"
+          importNames: [styled]
+          message: "@mui/styled has performance implications. Use tss-react/mui instead."
+
+        - name: "@mui/system"
+          importNames: [styled]
+          message: "@mui/styled has performance implications. Use tss-react/mui instead."
+
+        - name: "@mui/material/styles/styled"
+          message: "@mui/styled has performance implications. Use tss-react/mui instead."
+
+        - name: "@mui/material"
+          importNames: [Box]
+          message: "@mui/Box has performance implications. Use tss-react/mui instead."
+
+        - name: "@mui/system"
+          importNames: [Box]
+          message: "@mui/Box has performance implications. Use tss-react/mui instead."
+
+        - name: "lodash"
           importNames: [get]
           message: "Use optional chaining instead of lodash.get."
-        - name: lodash/get
+
+        - name: "lodash/get"
           message: "Use optional chaining instead of lodash.get."
 
   no-restricted-syntax:
@@ -85,7 +117,20 @@ rules:
         `// eslint-disable-next-line no-restricted-syntax`. For rationale, see:
         https://github.com/sindresorhus/meta/discussions/7"
 
-  jest/no-done-callback: off # Can be a useful alternative to promises
+    - selector: "CallExpression[callee.name='setTimeout'][arguments.length<2]"
+      message: "`setTimeout()` must be invoked with at least two arguments."
+    - selector: "CallExpression[callee.name='setInterval'][arguments.length<2]"
+      message: "`setInterval()` must be invoked with at least two arguments."
+
+    - selector: "CallExpression[callee.object.name='Promise'][callee.property.name='race']"
+      message: >
+        Promise.race is banned
+          use `import { race } from "@foxglove/den/async"` instead
+
+        See:
+          https://github.com/nodejs/node/issues/17469#issuecomment-685216777
+          https://bugs.chromium.org/p/v8/issues/detail?id=9858"
+
   jest/expect-expect:
     [error, { assertFunctionNames: [expect*, sendNotification.expectCalledDuringTest] }]
 
@@ -100,17 +145,16 @@ overrides:
         - error
         - ts-expect-error: allow-with-description
 
+      "@typescript-eslint/explicit-member-accessibility": error
+
       "@typescript-eslint/no-inferrable-types": off # It's sometimes useful to explicitly name to guard against future changes
       "@typescript-eslint/no-empty-function": off
-      "@typescript-eslint/no-implied-eval": off # We need to use `new Function()`
 
       # These are related to `any` types, which we generally don't have except from imports
       "@typescript-eslint/no-unsafe-member-access": off
       "@typescript-eslint/no-unsafe-return": off
       "@typescript-eslint/no-unsafe-assignment": off
       "@typescript-eslint/no-unsafe-call": off
-
-      "@typescript-eslint/require-await": off # Async functions without await are used to satisfy interface requirements
 
       # These could theoretically be turned on (or merit investigation) but are currently noisy
       "@typescript-eslint/no-misused-promises": off # Often used with e.g. useCallback(async () => {})
@@ -120,9 +164,17 @@ overrides:
       "@typescript-eslint/no-unnecessary-condition": error
       "@typescript-eslint/unbound-method": [error, { ignoreStatic: true }]
 
+      # https://eslint.org/docs/latest/rules/no-loop-func
+      "no-loop-func": error
+
   - rules:
       "@typescript-eslint/no-explicit-any": off
     files:
       - "**/*.stories.tsx"
       - "**/*.test.tsx"
       - "**/*.test.ts"
+
+  - rules:
+      react/forbid-component-props: off
+    files:
+      - "**/*.stories.tsx"

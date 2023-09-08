@@ -2,16 +2,14 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
-import type { vec3, quat, mat4, ReadonlyMat4 } from "gl-matrix";
+import { vec3, quat, mat4, ReadonlyMat4 } from "gl-matrix";
 
-// ts-prune-ignore-next
 export type Point = {
   x: number;
   y: number;
   z: number;
 };
 
-// ts-prune-ignore-next
 export type Orientation = {
   x: number;
   y: number;
@@ -24,9 +22,16 @@ export type Pose = {
   orientation: Orientation;
 };
 
-// ts-prune-ignore-next
 export function makePose(): Pose {
   return { position: { x: 0, y: 0, z: 0 }, orientation: { x: 0, y: 0, z: 0, w: 1 } };
+}
+
+export function xyzrpyToPose(xyz: vec3, rpy: vec3): Pose {
+  const o = quat.fromEuler([0, 0, 0, 1], rpy[0], rpy[1], rpy[2]);
+  return {
+    position: { x: xyz[0], y: xyz[1], z: xyz[2] },
+    orientation: { x: o[0], y: o[1], z: o[2], w: o[3] },
+  };
 }
 
 // Helper functions for constructing geometry primitives that can be used with
@@ -39,37 +44,30 @@ export function vec3Identity(): vec3 {
   return [0, 0, 0];
 }
 
-// ts-prune-ignore-next
 export function vec3FromValues(x: number, y: number, z: number): vec3 {
   return [x, y, z];
 }
 
-// ts-prune-ignore-next
 export function vec3Clone(a: vec3): vec3 {
   return [a[0], a[1], a[2]];
 }
 
-// ts-prune-ignore-next
 export function quatIdentity(): quat {
   return [0, 0, 0, 1];
 }
 
-// ts-prune-ignore-next
 export function quatFromValues(x: number, y: number, z: number, w: number): quat {
   return [x, y, z, w];
 }
 
-// ts-prune-ignore-next
 export function quatClone(q: quat): quat {
   return [q[0], q[1], q[2], q[3]];
 }
 
-// ts-prune-ignore-next
 export function mat4Identity(): mat4 {
   return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 }
 
-// ts-prune-ignore-next
 export function mat4FromValues(
   m00: number,
   m01: number,
@@ -91,7 +89,6 @@ export function mat4FromValues(
   return [m00, m01, m02, m03, m10, m11, m12, m13, m20, m21, m22, m23, m30, m31, m32, m33];
 }
 
-// ts-prune-ignore-next
 export function mat4Clone(m: mat4): mat4 {
   return [
     m[0],

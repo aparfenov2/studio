@@ -1,6 +1,6 @@
-// This example shows how to publish a Marker message from a Node Playground node.
+// This example shows how to publish a Marker message from a User Script.
 //
-// Publishing Marker messages with a Node Playground script is a good way to visualize non-visual
+// Publishing Marker messages with a User Script is a good way to visualize non-visual
 // data.
 //
 // For example, if your robot calculates some projected paths and publishes them between two
@@ -15,7 +15,7 @@ import { buildRosMarker, MarkerTypes } from "./markers";
 type GlobalVariables = { id: number };
 
 export const inputs = ["/input/topic"];
-export const output = "/studio_node/my_custom_topic";
+export const output = "/studio_script/my_custom_topic";
 
 // Our node will output a Marker message.
 type Marker = Message<"visualization_msgs/Marker">;
@@ -24,7 +24,7 @@ type Marker = Message<"visualization_msgs/Marker">;
 // The marker array message has one field, `markers`, which is an array of Marker messaages.
 // type MarkerArray = Message<"visualization_msgs/MarkerArray">;
 
-export default function node(event: Input<"/input/topic">, globalVars: GlobalVariables): Marker {
+export default function script(event: Input<"/input/topic">, globalVars: GlobalVariables): Marker {
   return buildRosMarker({
       // Add any fields you want to set in the marker here
       // Any fields you omit will use default values

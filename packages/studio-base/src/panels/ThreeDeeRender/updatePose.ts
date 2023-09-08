@@ -4,17 +4,15 @@
 
 import * as THREE from "three";
 
-import { Pose } from "./ros";
-import { TransformTree } from "./transforms/TransformTree";
-import { makePose } from "./transforms/geometry";
+import { TransformTree, makePose, Pose, AnyFrameId } from "./transforms";
 
 const tempPose = makePose();
 
 export function updatePose(
   renderable: THREE.Object3D,
   transformTree: TransformTree,
-  renderFrameId: string,
-  fixedFrameId: string,
+  renderFrameId: AnyFrameId,
+  fixedFrameId: AnyFrameId,
   srcFrameId: string,
   dstTime: bigint,
   srcTime: bigint,
@@ -32,7 +30,6 @@ export function updatePose(
     const q = tempPose.orientation;
     renderable.position.set(p.x, p.y, p.z);
     renderable.quaternion.set(q.x, q.y, q.z, q.w);
-    renderable.updateMatrix();
   }
   return poseApplied;
 }

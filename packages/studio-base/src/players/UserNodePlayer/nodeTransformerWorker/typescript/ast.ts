@@ -13,7 +13,7 @@
 
 import ts from "typescript/lib/typescript";
 
-import { RosMsgField } from "@foxglove/rosmsg";
+import { MessageDefinitionField } from "@foxglove/message-definition";
 import {
   noFuncError,
   nonFuncError,
@@ -58,8 +58,8 @@ const MAX_DEPTH = 100;
 // error class, just throw a regular error. This error will be reported in the notification tab
 // as a true error, so that users can inform us when things are truly broken.
 export class DatatypeExtractionError extends Error {
-  diagnostic: Diagnostic;
-  constructor(diagnostic: Diagnostic) {
+  public diagnostic: Diagnostic;
+  public constructor(diagnostic: Diagnostic) {
     super();
     this.diagnostic = diagnostic;
   }
@@ -153,6 +153,7 @@ export const findDefaultExportFunction = (
 
   const defaultExportSymbol = checker
     .getExportsOfModule(symbol)
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-enum-comparison
     .find((node) => node.escapedName === "default");
   if (!defaultExportSymbol) {
     throw new DatatypeExtractionError(noFuncError);
@@ -250,6 +251,13 @@ export const findReturnType = (
   throw new DatatypeExtractionError(badTypeReturnError);
 };
 
+/**
+ * Create datatypes (and names) from an input node.
+ *
+ * This function attempts to detect well-known schema names and use those for the datatypes rather
+ * than creating fake names. This makes it possible to write scripts that output well-known datatypes
+ * for work with panels that expect well-known datatype names.
+ */
 export const constructDatatypes = (
   checker: ts.TypeChecker,
   node: ts.TypeLiteralNode | ts.InterfaceDeclaration,
@@ -276,10 +284,12 @@ export const constructDatatypes = (
     };
   }
 
+  const sourceFileName = node.getSourceFile().fileName;
+
   // In this case, we've detected that the return type comes from the generated types file.
   // We can look up the datatype name by finding it in the file. The name will be the property name
   // under which the type exists.
-  if (node.getSourceFile().fileName === "/studio_node/generatedTypes.ts") {
+  if (sourceFileName === "/studio_script/generatedTypes.ts") {
     if (ts.isPropertySignature(node.parent) && ts.isStringLiteral(node.parent.name)) {
       const datatype = node.parent.name.text;
       return {
@@ -287,6 +297,20 @@ export const constructDatatypes = (
         datatypes: sourceDatatypes,
       };
     }
+  }
+
+  // Check if the source file comes from our @foxglove/schemas package. If it does, we can
+  // use a well-known name for the datatype. We assume here that each schema is in a
+  // separate file with the same name as the schema type.
+  const schemasFileRegex = /^\/studio_script\/node_modules\/@foxglove\/schemas\/(\w+)\.ts$/;
+
+  const match = sourceFileName.match(schemasFileRegex);
+  const schemaName = match?.[1];
+  if (schemaName) {
+    return {
+      outputDatatype: `foxglove.${schemaName}`,
+      datatypes: sourceDatatypes,
+    };
   }
 
   let datatypes: RosDatatypes = new Map();
@@ -300,7 +324,7 @@ export const constructDatatypes = (
     isComplex: boolean = false,
     typeMap: TypeMap = {},
     innerDepth: number = 1,
-  ): RosMsgField => {
+  ): MessageDefinitionField => {
     if (innerDepth > MAX_DEPTH) {
       throw new Error(`Max AST traversal depth exceeded.`);
     }
@@ -344,9 +368,6 @@ export const constructDatatypes = (
             secField.isArray !== true &&
             nsecField.isArray !== true
           ) {
-            // TODO(JP): Might want to do some extra checks for types here. But then again,
-            // "time" is just pretty awkward of a field in general; maybe we should instead
-            // just get rid of it throughout our application and treat it as a regular nested object?
             return {
               name,
               type: "time",
@@ -431,6 +452,7 @@ export const constructDatatypes = (
         // One solution could potentially to 'cast' this node as an
         // ArrayTypeNode and recurse. Opting out of using 'Array' keyword for
         // now.
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-enum-comparison
         if (nextSymbol?.escapedName === "Array") {
           throw new DatatypeExtractionError(preferArrayLiteral);
         }
@@ -466,6 +488,7 @@ export const constructDatatypes = (
           ts.SyntaxKind.InterfaceDeclaration,
           ts.SyntaxKind.ImportSpecifier,
           ts.SyntaxKind.ClassDeclaration,
+          ts.SyntaxKind.EnumDeclaration,
         ]);
 
         if (!nextNode) {
@@ -513,7 +536,14 @@ export const constructDatatypes = (
       case ts.SyntaxKind.ClassDeclaration: {
         throw new DatatypeExtractionError(classError);
       }
-
+      case ts.SyntaxKind.EnumDeclaration:
+        return {
+          name,
+          type: "uint32",
+          isArray,
+          isComplex,
+          arrayLength: undefined,
+        };
       case ts.SyntaxKind.UnionType: {
         throw new DatatypeExtractionError(unionsError);
       }
@@ -526,7 +556,15 @@ export const constructDatatypes = (
       default: {
         const locationType = checker.getTypeAtLocation(tsNode);
 
-        const symbol = locationType.symbol;
+        const symbol = locationType.symbol as ts.Symbol | undefined;
+        if (symbol == undefined) {
+          throw new DatatypeExtractionError({
+            severity: DiagnosticSeverity.Error,
+            message: `Unsupported type for member '${name}'.`,
+            source: Sources.DatatypeExtraction,
+            code: ErrorCodes.DatatypeExtraction.BAD_TYPE_RETURN,
+          });
+        }
         const declaration = symbol.declarations?.[0];
         if (symbol.declarations?.length !== 1 || !declaration) {
           throw new DatatypeExtractionError(badTypeReturnError);

@@ -11,32 +11,21 @@
 //   found at http://www.apache.org/licenses/LICENSE-2.0
 //   You may not use this file except in compliance with the License.
 
-import { useTheme } from "@fluentui/react";
-import CheckboxBlankOutlineIcon from "@mdi/svg/svg/checkbox-blank-outline.svg";
-import CheckboxMarkedIcon from "@mdi/svg/svg/checkbox-marked.svg";
-import PlusMinusIcon from "@mdi/svg/svg/plus-minus.svg";
-import LessIcon from "@mdi/svg/svg/unfold-less-horizontal.svg";
-import MoreIcon from "@mdi/svg/svg/unfold-more-horizontal.svg";
-import { Theme } from "@mui/material";
-import { makeStyles } from "@mui/styles";
-import { Immutable } from "immer";
+import { Checkbox, FormControlLabel, Typography, useTheme } from "@mui/material";
 // eslint-disable-next-line no-restricted-imports
-import { first, isEqual, get, last } from "lodash";
-import { useState, useCallback, useMemo, useEffect } from "react";
+import { first, get, isEqual, last, padStart } from "lodash";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import ReactHoverObserver from "react-hover-observer";
 import Tree from "react-json-tree";
-import { useLatest } from "react-use";
+import { makeStyles } from "tss-react/mui";
 
+import { Immutable, SettingsTreeAction } from "@foxglove/studio";
 import { useDataSourceInfo } from "@foxglove/studio-base/PanelAPI";
-import Dropdown from "@foxglove/studio-base/components/Dropdown";
-import DropdownItem from "@foxglove/studio-base/components/Dropdown/DropdownItem";
 import EmptyState from "@foxglove/studio-base/components/EmptyState";
-import Icon from "@foxglove/studio-base/components/Icon";
 import useGetItemStringWithTimezone from "@foxglove/studio-base/components/JsonTree/useGetItemStringWithTimezone";
-import MessagePathInput from "@foxglove/studio-base/components/MessagePathSyntax/MessagePathInput";
 import {
-  RosPath,
   MessagePathStructureItem,
+  RosPath,
 } from "@foxglove/studio-base/components/MessagePathSyntax/constants";
 import {
   messagePathStructures,
@@ -47,40 +36,36 @@ import { MessagePathDataItem } from "@foxglove/studio-base/components/MessagePat
 import { useMessageDataItem } from "@foxglove/studio-base/components/MessagePathSyntax/useMessageDataItem";
 import Panel from "@foxglove/studio-base/components/Panel";
 import { usePanelContext } from "@foxglove/studio-base/components/PanelContext";
-import PanelToolbar from "@foxglove/studio-base/components/PanelToolbar";
-import { SettingsTreeAction } from "@foxglove/studio-base/components/SettingsTreeEditor/types";
-import Tooltip from "@foxglove/studio-base/components/Tooltip";
+import Stack from "@foxglove/studio-base/components/Stack";
+import { Toolbar } from "@foxglove/studio-base/panels/RawMessages/Toolbar";
 import getDiff, {
+  DiffObject,
   diffLabels,
   diffLabelsByLabelText,
-  DiffObject,
 } from "@foxglove/studio-base/panels/RawMessages/getDiff";
 import { Topic } from "@foxglove/studio-base/players/types";
-import { usePanelSettingsTreeUpdate } from "@foxglove/studio-base/providers/PanelSettingsEditorContextProvider";
+import { usePanelSettingsTreeUpdate } from "@foxglove/studio-base/providers/PanelStateContextProvider";
+import { SaveConfig } from "@foxglove/studio-base/types/panels";
+import { enumValuesByDatatypeAndField } from "@foxglove/studio-base/util/enums";
 import { useJsonTreeTheme } from "@foxglove/studio-base/util/globalConstants";
-import { enumValuesByDatatypeAndField } from "@foxglove/studio-base/util/selectors";
 import { fonts } from "@foxglove/studio-base/util/sharedStyleConstants";
 
-import DiffSpan from "./DiffSpan";
+import { DiffSpan } from "./DiffSpan";
+import DiffStats from "./DiffStats";
 import MaybeCollapsedValue from "./MaybeCollapsedValue";
 import Metadata from "./Metadata";
 import Value from "./Value";
 import {
   ValueAction,
-  getValueActionForValue,
   getStructureItemForPath,
+  getValueActionForValue,
 } from "./getValueActionForValue";
-import helpContent from "./index.help.md";
-import { buildSettingsTree } from "./settings";
-import { RawMessagesPanelConfig } from "./types";
-import { DATA_ARRAY_PREVIEW_LIMIT, generateDeepKeyPaths, getItemStringForDiff } from "./utils";
-
-export const CUSTOM_METHOD = "custom";
-export const PREV_MSG_METHOD = "previous message";
+import { Constants, NodeState, RawMessagesPanelConfig } from "./types";
+import { DATA_ARRAY_PREVIEW_LIMIT, generateDeepKeyPaths, toggleExpansion } from "./utils";
 
 type Props = {
   config: Immutable<RawMessagesPanelConfig>;
-  saveConfig: (arg0: Partial<RawMessagesPanelConfig>) => void;
+  saveConfig: SaveConfig<RawMessagesPanelConfig>;
 };
 
 const isSingleElemArray = (obj: unknown): obj is unknown[] => {
@@ -89,6 +74,7 @@ const isSingleElemArray = (obj: unknown): obj is unknown[] => {
   }
   return obj.filter((a) => a != undefined).length === 1;
 };
+
 const dataWithoutWrappingArray = (data: unknown) => {
   return isSingleElemArray(data) && typeof data[0] === "object" ? data[0] : data;
 };
@@ -102,65 +88,50 @@ function maybeDeepParse(val: unknown) {
   return val;
 }
 
-const useStyles = makeStyles((theme: Theme) => ({
-  root: {
-    display: "flex",
-    flexDirection: "column",
-    flex: "auto",
-    overflow: "hidden",
-    position: "relative",
-  },
+const useStyles = makeStyles()((theme) => ({
   topic: {
-    display: "flex",
-    flexDirection: "column",
-    flex: "auto",
-    overflow: "hidden auto",
-    paddingLeft: theme.spacing(0.75),
     fontFamily: fonts.SANS_SERIF,
-    fontFeatureSettings: `${fonts.SANS_SERIF_FEATURE_SETTINGS}, "zero"`,
+    fontFeatureSettings: `${theme.typography.fontFeatureSettings}, "zero"`,
   },
-  diff: {
-    display: "flex",
-    flex: "auto",
-  },
-  iconWrapper: {
-    display: "inline",
-    paddingRight: 40, // To make it so the icons appear when you move the mouse somewhat close.
-  },
-  singleVal: {
-    fontSize: "2.5em",
-    wordWrap: "break-word",
-    fontWeight: "bold",
-    whiteSpace: "pre-line",
-  },
-  topicInputs: {
-    width: "100%",
-    lineHeight: "20px",
-  },
-  invisibleSpace: {
-    // https://stackoverflow.com/questions/62319014/make-text-selection-treat-adjacent-elements-as-separate-words
-    fontSize: 0,
+  hoverObserver: {
+    display: "inline-flex",
+    alignItems: "center",
   },
 }));
 
 function RawMessages(props: Props) {
-  const theme = useTheme();
-  const classes = useStyles();
+  const {
+    palette: { mode: themePreference },
+  } = useTheme();
+  const { classes } = useStyles();
   const jsonTreeTheme = useJsonTreeTheme();
   const { config, saveConfig } = props;
   const { openSiblingPanel } = usePanelContext();
   const { topicPath, diffMethod, diffTopicPath, diffEnabled, showFullMessageForDiff } = config;
   const { topics, datatypes } = useDataSourceInfo();
-  const { id: panelId } = usePanelContext();
+  const updatePanelSettingsTree = usePanelSettingsTreeUpdate();
+  const { setMessagePathDropConfig } = usePanelContext();
+
+  useEffect(() => {
+    setMessagePathDropConfig({
+      getDropStatus(_path) {
+        return { canDrop: true, effect: "replace" };
+      },
+      handleDrop(path) {
+        saveConfig({ topicPath: path.path });
+      },
+    });
+  }, [setMessagePathDropConfig, saveConfig]);
 
   const defaultGetItemString = useGetItemStringWithTimezone();
   const getItemString = useMemo(
     () =>
       diffEnabled
-        ? (type: string, data: DiffObject, itemType: React.ReactNode) =>
-            getItemStringForDiff({ type, data, itemType, isInverted: theme.isInverted })
+        ? (_type: string, data: DiffObject, itemType: React.ReactNode) => (
+            <DiffStats data={data} itemType={itemType} />
+          )
         : defaultGetItemString,
-    [defaultGetItemString, diffEnabled, theme.isInverted],
+    [defaultGetItemString, diffEnabled],
   );
 
   const topicRosPath: RosPath | undefined = useMemo(() => parseRosPath(topicPath), [topicPath]);
@@ -168,75 +139,61 @@ function RawMessages(props: Props) {
     () => topicRosPath && topics.find(({ name }) => name === topicRosPath.topicName),
     [topicRosPath, topics],
   );
+
+  const structures = useMemo(() => messagePathStructures(datatypes), [datatypes]);
+
   const rootStructureItem: MessagePathStructureItem | undefined = useMemo(() => {
-    if (!topic || !topicRosPath) {
+    if (!topic || !topicRosPath || topic.schemaName == undefined) {
       return;
     }
-    return traverseStructure(
-      messagePathStructures(datatypes)[topic.datatype],
-      topicRosPath.messagePath,
-    ).structureItem;
-  }, [datatypes, topic, topicRosPath]);
+    return traverseStructure(structures[topic.schemaName], topicRosPath.messagePath).structureItem;
+  }, [structures, topic, topicRosPath]);
 
-  // When expandAll is unset, we'll use expandedFields to get expanded info
-  const [expandAll, setExpandAll] = useState<boolean | undefined>(config.autoExpandMode === "all");
-  const [expandedFields, setExpandedFields] = useState(new Set<string>());
+  const [expansion, setExpansion] = useState(config.expansion);
+  const [customFontSize, setCustomFontSize] = useState<number | undefined>();
 
-  const matchedMessages = useMessageDataItem(topicPath, { historySize: 2 });
+  // Pass an empty path to useMessageDataItem if our path doesn't resolve to a valid topic to avoid
+  // spamming the message pipeline with useless subscription requests.
+  const matchedMessages = useMessageDataItem(topic ? topicPath : "", { historySize: 2 });
   const diffMessages = useMessageDataItem(diffEnabled ? diffTopicPath : "");
 
   const diffTopicObj = diffMessages[0];
   const currTickObj = matchedMessages[matchedMessages.length - 1];
   const prevTickObj = matchedMessages[matchedMessages.length - 2];
 
-  const inTimetickDiffMode = diffEnabled && diffMethod === PREV_MSG_METHOD;
+  const inTimetickDiffMode = diffEnabled && diffMethod === Constants.PREV_MSG_METHOD;
   const baseItem = inTimetickDiffMode ? prevTickObj : currTickObj;
   const diffItem = inTimetickDiffMode ? currTickObj : diffTopicObj;
 
-  const latestExpandedFields = useLatest(expandedFields);
-
-  useEffect(() => {
-    if (
-      latestExpandedFields.current.keys.length === 0 &&
-      baseItem &&
-      config.autoExpandMode === "auto"
-    ) {
+  const nodes = useMemo(() => {
+    if (baseItem) {
       const data = dataWithoutWrappingArray(baseItem.queriedData.map(({ value }) => value));
-      const newExpandedFields = generateDeepKeyPaths(maybeDeepParse(data), 5);
-      setExpandedFields(newExpandedFields);
-      setExpandAll(undefined);
-    } else if (config.autoExpandMode === "all") {
-      setExpandedFields(new Set());
-      setExpandAll(true);
+      return generateDeepKeyPaths(maybeDeepParse(data), 5);
+    } else {
+      return new Set<string>();
     }
-  }, [baseItem, config.autoExpandMode, latestExpandedFields]);
+  }, [baseItem]);
 
-  const updateSettingsTree = usePanelSettingsTreeUpdate();
-
-  const settingsActionHandler = useCallback(
-    (action: SettingsTreeAction) => {
-      if (action.action !== "update") {
-        return;
-      }
-
-      if (action.payload.input === "select") {
-        saveConfig({
-          autoExpandMode: action.payload.value as RawMessagesPanelConfig["autoExpandMode"],
-        });
-      }
-    },
-    [saveConfig],
-  );
-
-  useEffect(() => {
-    updateSettingsTree(panelId, {
-      actionHandler: settingsActionHandler,
-      roots: buildSettingsTree(config),
-    });
-  }, [config, panelId, settingsActionHandler, updateSettingsTree]);
+  const canExpandAll = useMemo(() => {
+    if (expansion === "none") {
+      return true;
+    }
+    if (expansion === "all") {
+      return false;
+    }
+    if (
+      typeof expansion === "object" &&
+      Object.values(expansion).some((v) => v === NodeState.Collapsed)
+    ) {
+      return true;
+    } else {
+      return false;
+    }
+  }, [expansion]);
 
   const onTopicPathChange = useCallback(
     (newTopicPath: string) => {
+      setExpansion(undefined);
       saveConfig({ topicPath: newTopicPath });
     },
     [saveConfig],
@@ -254,36 +211,31 @@ function RawMessages(props: Props) {
   }, [diffEnabled, saveConfig]);
 
   const onToggleExpandAll = useCallback(() => {
-    setExpandedFields(new Set());
-    setExpandAll((currVal) => !(currVal ?? false));
-  }, []);
+    setExpansion(canExpandAll ? "all" : "none");
+  }, [canExpandAll]);
 
   const onLabelClick = useCallback(
     (keypath: (string | number)[]) => {
-      // Create a unique key according to the keypath / raw
-      const key = keypath.join("~");
-      const expandedFieldsCopy = new Set(expandedFields);
-      if (expandedFieldsCopy.has(key)) {
-        expandedFieldsCopy.delete(key);
-        setExpandedFields(expandedFieldsCopy);
-      } else {
-        expandedFieldsCopy.add(key);
-        setExpandedFields(expandedFieldsCopy);
-      }
-      setExpandAll(undefined);
+      setExpansion((old) => toggleExpansion(old ?? "all", nodes, keypath.join("~")));
     },
-    [expandedFields],
+    [nodes],
   );
+
+  useEffect(() => {
+    saveConfig({ expansion });
+  }, [expansion, saveConfig]);
 
   const getValueLabels = useCallback(
     ({
       constantName,
       label,
       itemValue,
+      keyPath,
     }: {
       constantName: string | undefined;
       label: string;
       itemValue: unknown;
+      keyPath: ReadonlyArray<number | string>;
     }): { arrLabel: string; itemLabel: string } => {
       let itemLabel = label;
       if (typeof itemValue === "bigint") {
@@ -302,6 +254,15 @@ function RawMessages(props: Props) {
       if (constantName != undefined) {
         itemLabel = `${itemLabel} (${constantName})`;
       }
+
+      // When we encounter a nsec field (nanosecond) that is a number, we ensure the label displays 9 digits.
+      // This helps when visually scanning time values from `sec` and `nsec` fields.
+      // A nanosecond label of 099999999 makes it easier to realize this is 0.09 seconds compared to
+      // 99999999 which requires some counting to reamize this is also 0.09
+      if (keyPath[0] === "nsec" && typeof itemValue === "number") {
+        itemLabel = padStart(itemLabel, 9, "0");
+      }
+
       return { arrLabel, itemLabel };
     },
     [],
@@ -310,7 +271,12 @@ function RawMessages(props: Props) {
   const renderDiffLabel = useCallback(
     (label: string, itemValue: unknown) => {
       let constantName: string | undefined;
-      const { arrLabel, itemLabel } = getValueLabels({ constantName, label, itemValue });
+      const { arrLabel, itemLabel } = getValueLabels({
+        constantName,
+        label,
+        itemValue,
+        keyPath: [],
+      });
       return (
         <Value
           arrLabel={arrLabel}
@@ -326,6 +292,8 @@ function RawMessages(props: Props) {
     [getValueLabels, onTopicPathChange, openSiblingPanel],
   );
 
+  const enumMapping = useMemo(() => enumValuesByDatatypeAndField(datatypes), [datatypes]);
+
   const valueRenderer = useCallback(
     (
       structureItem: MessagePathStructureItem | undefined,
@@ -335,7 +303,7 @@ function RawMessages(props: Props) {
       itemValue: unknown,
       ...keyPath: (number | string)[]
     ) => (
-      <ReactHoverObserver className={classes.iconWrapper}>
+      <ReactHoverObserver className={classes.hoverObserver}>
         {({ isHovering }: { isHovering: boolean }) => {
           const lastKeyPath = last(keyPath) as number;
           let valueAction: ValueAction | undefined;
@@ -351,19 +319,27 @@ function RawMessages(props: Props) {
           if (structureItem) {
             const childStructureItem = getStructureItemForPath(
               structureItem,
-              keyPath.slice(0, -1).reverse().join(","),
+              keyPath.slice(0, -1).reverse(),
             );
             if (childStructureItem) {
-              const field = keyPath[0];
+              // if it's an array index (typeof number) then we want the nearest named array which will be typeof string
+
+              const keyPathIndex = keyPath.findIndex((key) => typeof key === "string");
+              const field = keyPath[keyPathIndex];
               if (typeof field === "string") {
-                const enumMapping = enumValuesByDatatypeAndField(datatypes);
                 const datatype = childStructureItem.datatype;
                 constantName = enumMapping[datatype]?.[field]?.[String(itemValue)];
               }
             }
           }
           const basePath = queriedData[lastKeyPath]?.path ?? "";
-          const { arrLabel, itemLabel } = getValueLabels({ constantName, label, itemValue });
+          const { arrLabel, itemLabel } = getValueLabels({
+            constantName,
+            label,
+            itemValue,
+            keyPath,
+          });
+
           return (
             <Value
               arrLabel={arrLabel}
@@ -378,22 +354,33 @@ function RawMessages(props: Props) {
         }}
       </ReactHoverObserver>
     ),
-    [classes, datatypes, getValueLabels, onTopicPathChange, openSiblingPanel],
+    [classes.hoverObserver, enumMapping, getValueLabels, onTopicPathChange, openSiblingPanel],
   );
 
   const renderSingleTopicOrDiffOutput = useCallback(() => {
     const shouldExpandNode = (keypath: (string | number)[]) => {
-      if (expandAll != undefined) {
-        return expandAll;
+      if (expansion === "all") {
+        return true;
+      }
+      if (expansion === "none") {
+        return false;
       }
 
-      return expandedFields.has(keypath.join("~"));
+      const joinedPath = keypath.join("~");
+      if (expansion && expansion[joinedPath] === NodeState.Collapsed) {
+        return false;
+      }
+      if (expansion && expansion[joinedPath] === NodeState.Expanded) {
+        return true;
+      }
+
+      return true;
     };
 
     if (topicPath.length === 0) {
       return <EmptyState>No topic selected</EmptyState>;
     }
-    if (diffEnabled && diffMethod === CUSTOM_METHOD && (!baseItem || !diffItem)) {
+    if (diffEnabled && diffMethod === Constants.CUSTOM_METHOD && (!baseItem || !diffItem)) {
       return (
         <EmptyState>{`Waiting to diff next messages from "${topicPath}" and "${diffTopicPath}"`}</EmptyState>
       );
@@ -425,44 +412,57 @@ function RawMessages(props: Props) {
         })
       : {};
 
-    const CheckboxComponent = showFullMessageForDiff
-      ? CheckboxMarkedIcon
-      : CheckboxBlankOutlineIcon;
-
     return (
-      <div className={classes.topic}>
+      <Stack
+        className={classes.topic}
+        flex="auto"
+        overflowX="hidden"
+        paddingLeft={0.75}
+        data-testid="panel-scroll-container"
+      >
         <Metadata
           data={data}
           diffData={diffData}
           diff={diff}
           message={baseItem.messageEvent}
-          {...(topic ? { datatype: topic.datatype } : undefined)}
+          {...(topic ? { datatype: topic.schemaName } : undefined)}
           {...(diffItem ? { diffMessage: diffItem.messageEvent } : undefined)}
         />
         {shouldDisplaySingleVal ? (
-          <div className={classes.singleVal}>
+          <Typography
+            variant="h1"
+            fontSize={customFontSize}
+            whiteSpace="pre-wrap"
+            style={{ wordWrap: "break-word" }}
+          >
             <MaybeCollapsedValue itemLabel={String(singleVal)} />
-          </div>
+          </Typography>
         ) : diffEnabled && isEqual({}, diff) ? (
           <EmptyState>No difference found</EmptyState>
         ) : (
           <>
             {diffEnabled && (
-              <div
-                style={{ cursor: "pointer", fontSize: "11px" }}
-                onClick={() => saveConfig({ showFullMessageForDiff: !showFullMessageForDiff })}
-              >
-                <Icon style={{ verticalAlign: "middle" }}>
-                  <CheckboxComponent />
-                </Icon>{" "}
-                Show full msg
-              </div>
+              <FormControlLabel
+                disableTypography
+                checked={showFullMessageForDiff}
+                control={
+                  <Checkbox
+                    size="small"
+                    defaultChecked
+                    onChange={() => {
+                      saveConfig({ showFullMessageForDiff: !showFullMessageForDiff });
+                    }}
+                  />
+                }
+                label="Show full msg"
+              />
             )}
             <Tree
               labelRenderer={(raw) => (
                 <>
                   <DiffSpan>{first(raw)}</DiffSpan>
-                  <span className={classes.invisibleSpace}>&nbsp;</span>
+                  {/* https://stackoverflow.com/questions/62319014/make-text-selection-treat-adjacent-elements-as-separate-words */}
+                  <span style={{ fontSize: 0 }}>&nbsp;</span>
                 </>
               )}
               shouldExpandNode={shouldExpandNode}
@@ -531,7 +531,9 @@ function RawMessages(props: Props) {
                 nestedNode: ({ style }, keyPath: any) => {
                   const baseStyle = {
                     ...style,
-                    padding: "2px 0 2px 0",
+                    fontSize: customFontSize,
+                    paddingTop: 2,
+                    paddingBottom: 2,
                     marginTop: 2,
                     textDecoration: "inherit",
                   };
@@ -541,11 +543,12 @@ function RawMessages(props: Props) {
                   let backgroundColor;
                   let textDecoration;
                   if (diffLabelsByLabelText[keyPath[0]]) {
-                    backgroundColor = theme.isInverted
-                      ? // @ts-expect-error backgroundColor is not a property?
-                        diffLabelsByLabelText[keyPath[0]].invertedBackgroundColor
-                      : // @ts-expect-error backgroundColor is not a property?
-                        diffLabelsByLabelText[keyPath[0]].backgroundColor;
+                    backgroundColor =
+                      themePreference === "dark"
+                        ? // @ts-expect-error backgroundColor is not a property?
+                          diffLabelsByLabelText[keyPath[0]].invertedBackgroundColor
+                        : // @ts-expect-error backgroundColor is not a property?
+                          diffLabelsByLabelText[keyPath[0]].backgroundColor;
                     textDecoration =
                       keyPath[0] === diffLabels.DELETED.labelText ? "line-through" : "none";
                   }
@@ -553,11 +556,12 @@ function RawMessages(props: Props) {
                   // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
                   const nestedObjKey = Object.keys(nestedObj)[0];
                   if (nestedObjKey != undefined && diffLabelsByLabelText[nestedObjKey]) {
-                    backgroundColor = theme.isInverted
-                      ? // @ts-expect-error backgroundColor is not a property?
-                        diffLabelsByLabelText[nestedObjKey].invertedBackgroundColor
-                      : // @ts-expect-error backgroundColor is not a property?
-                        diffLabelsByLabelText[nestedObjKey].backgroundColor;
+                    backgroundColor =
+                      themePreference === "dark"
+                        ? // @ts-expect-error backgroundColor is not a property?
+                          diffLabelsByLabelText[nestedObjKey].invertedBackgroundColor
+                        : // @ts-expect-error backgroundColor is not a property?
+                          diffLabelsByLabelText[nestedObjKey].backgroundColor;
                     textDecoration =
                       nestedObjKey === diffLabels.DELETED.labelText ? "line-through" : "none";
                   }
@@ -577,7 +581,11 @@ function RawMessages(props: Props) {
                 }),
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 value: ({ style }, _nodeType, keyPath: any) => {
-                  const baseStyle = { ...style, textDecoration: "inherit" };
+                  const baseStyle = {
+                    ...style,
+                    fontSize: customFontSize,
+                    textDecoration: "inherit",
+                  };
                   if (!diffEnabled) {
                     return { style: baseStyle };
                   }
@@ -587,11 +595,12 @@ function RawMessages(props: Props) {
                   // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
                   const nestedObjKey = Object.keys(nestedObj)[0];
                   if (nestedObjKey != undefined && diffLabelsByLabelText[nestedObjKey]) {
-                    backgroundColor = theme.isInverted
-                      ? // @ts-expect-error backgroundColor is not a property?
-                        diffLabelsByLabelText[nestedObjKey].invertedBackgroundColor
-                      : // @ts-expect-error backgroundColor is not a property?
-                        diffLabelsByLabelText[nestedObjKey].backgroundColor;
+                    backgroundColor =
+                      themePreference === "dark"
+                        ? // @ts-expect-error backgroundColor is not a property?
+                          diffLabelsByLabelText[nestedObjKey].invertedBackgroundColor
+                        : // @ts-expect-error backgroundColor is not a property?
+                          diffLabelsByLabelText[nestedObjKey].backgroundColor;
                     textDecoration =
                       nestedObjKey === diffLabels.DELETED.labelText ? "line-through" : "none";
                   }
@@ -609,92 +618,89 @@ function RawMessages(props: Props) {
             />
           </>
         )}
-      </div>
+      </Stack>
     );
   }, [
-    topicPath,
-    diffEnabled,
-    diffMethod,
     baseItem,
+    classes.topic,
+    customFontSize,
+    diffEnabled,
     diffItem,
-    showFullMessageForDiff,
-    topic,
-    classes,
+    diffMethod,
+    diffTopicPath,
+    expansion,
     getItemString,
     jsonTreeTheme,
-    expandAll,
-    expandedFields,
-    diffTopicPath,
-    saveConfig,
     onLabelClick,
-    valueRenderer,
-    rootStructureItem,
     renderDiffLabel,
-    theme,
+    rootStructureItem,
+    saveConfig,
+    showFullMessageForDiff,
+    themePreference,
+    topic,
+    topicPath,
+    valueRenderer,
   ]);
 
+  const actionHandler = useCallback((action: SettingsTreeAction) => {
+    if (action.action === "update") {
+      if (action.payload.path[0] === "general") {
+        if (action.payload.path[1] === "fontSize") {
+          setCustomFontSize(
+            action.payload.value != undefined ? (action.payload.value as number) : undefined,
+          );
+        }
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    updatePanelSettingsTree({
+      actionHandler,
+      nodes: {
+        general: {
+          label: "General",
+          fields: {
+            fontSize: {
+              label: "Font size",
+              input: "select",
+              options: [
+                { label: "auto", value: undefined },
+                ...Constants.FONT_SIZE_OPTIONS.map((value) => ({
+                  label: `${value} px`,
+                  value,
+                })),
+              ],
+              value: customFontSize,
+            },
+          },
+        },
+      },
+    });
+  }, [actionHandler, customFontSize, updatePanelSettingsTree]);
+
   return (
-    <div className={classes.root}>
-      <PanelToolbar helpContent={helpContent}>
-        <Icon tooltip="Toggle diff" size="medium" fade onClick={onToggleDiff} active={diffEnabled}>
-          <PlusMinusIcon />
-        </Icon>
-        <Icon
-          tooltip={expandAll ?? false ? "Collapse all" : "Expand all"}
-          size="medium"
-          fade
-          dataTest="expand-all"
-          onClick={onToggleExpandAll}
-          style={{ position: "relative", top: 1 }}
-        >
-          {expandAll ?? false ? <LessIcon /> : <MoreIcon />}
-        </Icon>
-        <div className={classes.topicInputs}>
-          <MessagePathInput
-            index={0}
-            path={topicPath}
-            onChange={onTopicPathChange}
-            inputStyle={{ height: 20 }}
-          />
-          {diffEnabled && (
-            <div className={classes.diff}>
-              <Tooltip contents="Diff method" placement="top">
-                <Dropdown
-                  value={diffMethod}
-                  onChange={(newDiffMethod) => saveConfig({ diffMethod: newDiffMethod })}
-                  noPortal
-                  btnStyle={{ padding: "4px 10px" }}
-                >
-                  <DropdownItem value={PREV_MSG_METHOD}>
-                    <span>{PREV_MSG_METHOD}</span>
-                  </DropdownItem>
-                  <DropdownItem value={CUSTOM_METHOD}>
-                    <span>custom</span>
-                  </DropdownItem>
-                </Dropdown>
-              </Tooltip>
-              {diffMethod === CUSTOM_METHOD ? (
-                <MessagePathInput
-                  index={1}
-                  path={diffTopicPath}
-                  onChange={onDiffTopicPathChange}
-                  inputStyle={{ height: "100%" }}
-                  {...(topic ? { prioritizedDatatype: topic.datatype } : {})}
-                />
-              ) : undefined}
-            </div>
-          )}
-        </div>
-      </PanelToolbar>
+    <Stack flex="auto" overflow="hidden" position="relative">
+      <Toolbar
+        canExpandAll={canExpandAll}
+        diffEnabled={diffEnabled}
+        diffMethod={diffMethod}
+        diffTopicPath={diffTopicPath}
+        onDiffTopicPathChange={onDiffTopicPathChange}
+        onToggleDiff={onToggleDiff}
+        onToggleExpandAll={onToggleExpandAll}
+        onTopicPathChange={onTopicPathChange}
+        saveConfig={saveConfig}
+        topicPath={topicPath}
+      />
       {renderSingleTopicOrDiffOutput()}
-    </div>
+    </Stack>
   );
 }
 
 const defaultConfig: RawMessagesPanelConfig = {
-  autoExpandMode: "auto",
   diffEnabled: false,
-  diffMethod: CUSTOM_METHOD,
+  diffMethod: Constants.CUSTOM_METHOD,
   diffTopicPath: "",
   showFullMessageForDiff: false,
   topicPath: "",

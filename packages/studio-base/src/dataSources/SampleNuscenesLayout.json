@@ -1,130 +1,330 @@
 {
   "configById": {
-    "ImageViewPanel!1r5tdvh": {
-      "cameraTopic": "/CAM_FRONT_LEFT/image_rect_compressed",
-      "enabledMarkerTopics": [
-        "/CAM_FRONT_LEFT/image_markers_annotations",
-        "/CAM_FRONT_LEFT/image_markers_lidar"
-      ],
-      "customMarkerTopicOptions": [],
-      "transformMarkers": false,
-      "synchronize": false,
-      "mode": "fit"
-    },
-    "ImageViewPanel!15kmj7r": {
-      "cameraTopic": "/CAM_FRONT/image_rect_compressed",
-      "enabledMarkerTopics": [
-        "/CAM_FRONT/image_markers_annotations",
-        "/CAM_FRONT/image_markers_lidar"
-      ],
-      "customMarkerTopicOptions": [],
-      "transformMarkers": false,
-      "synchronize": false,
-      "mode": "fit"
-    },
-    "ImageViewPanel!1jn49st": {
-      "cameraTopic": "/CAM_FRONT_RIGHT/image_rect_compressed",
-      "enabledMarkerTopics": [
-        "/CAM_FRONT_RIGHT/image_markers_annotations",
-        "/CAM_FRONT_RIGHT/image_markers_lidar"
-      ],
-      "customMarkerTopicOptions": [],
-      "transformMarkers": false,
-      "synchronize": false,
-      "mode": "fit"
-    },
-    "3D Panel!3bempa7": {
-      "checkedKeys": [
-        "name:Topics",
-        "ns:/tf:base_link",
-        "ns:/tf:CAM_BACK",
-        "ns:/tf:CAM_FRONT",
-        "t:/LIDAR_TOP",
-        "t:/map",
-        "t:/markers/annotations",
-        "t:/pose",
-        "t:/tf"
-      ],
-      "expandedKeys": ["name:Topics"],
-      "followMode": "follow",
-      "cameraState": {
-        "distance": 30,
-        "perspective": true,
-        "phi": 1.0099838922608053,
-        "targetOffset": [3.552551884097018, 0.17283719439514628, 0],
-        "thetaOffset": 0.8495002225312027,
-        "fovy": 0.7853981633974483,
-        "near": 0.01,
-        "far": 5000
-      },
-      "modifiedNamespaceTopics": ["/tf"],
-      "pinTopics": false,
-      "settingsByKey": {
-        "t:/pose": {
-          "size": {
-            "headLength": 0.75,
-            "headWidth": 2,
-            "shaftLength": 1.5,
-            "shaftWidth": 1.5
+    "Image!s2ii8x": {
+      "imageMode": {
+        "imageTopic": "/CAM_FRONT_LEFT/image_rect_compressed",
+        "calibrationTopic": "/CAM_FRONT_LEFT/camera_info",
+        "synchronize": false,
+        "rotation": 0,
+        "annotations": {
+          "/CAM_FRONT_LEFT/annotations": {
+            "visible": true
+          },
+          "/CAM_FRONT_LEFT/lidar": {
+            "visible": false
           }
         }
       },
-      "autoSyncCameraState": false,
-      "autoTextBackgroundColor": true,
-      "diffModeEnabled": true,
-      "useThemeBackgroundColor": true,
-      "customBackgroundColor": "#000000"
+      "cameraState": {
+        "distance": 20,
+        "perspective": true,
+        "phi": 60,
+        "target": [0, 0, 0],
+        "targetOffset": [0, 0, 0],
+        "targetOrientation": [0, 0, 0, 1],
+        "thetaOffset": 45,
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "followMode": "follow-pose",
+      "scene": {},
+      "transforms": {},
+      "topics": {
+        "/LIDAR_TOP": {
+          "visible": true,
+          "colorField": "intensity",
+          "colorMode": "colormap",
+          "colorMap": "turbo"
+        },
+        "/semantic_map": {
+          "visible": true
+        }
+      },
+      "layers": {},
+      "publish": {
+        "type": "point",
+        "poseTopic": "/move_base_simple/goal",
+        "pointTopic": "/clicked_point",
+        "poseEstimateTopic": "/initialpose",
+        "poseEstimateXDeviation": 0.5,
+        "poseEstimateYDeviation": 0.5,
+        "poseEstimateThetaDeviation": 0.26179939
+      }
+    },
+    "Image!qd8g5l": {
+      "imageMode": {
+        "imageTopic": "/CAM_FRONT/image_rect_compressed",
+        "calibrationTopic": "/CAM_FRONT/camera_info",
+        "synchronize": false,
+        "rotation": 0,
+        "annotations": {
+          "/CAM_FRONT/lidar": {
+            "visible": false
+          },
+          "/CAM_FRONT/annotations": {
+            "visible": true
+          }
+        }
+      },
+      "cameraState": {
+        "distance": 20,
+        "perspective": true,
+        "phi": 60,
+        "target": [0, 0, 0],
+        "targetOffset": [0, 0, 0],
+        "targetOrientation": [0, 0, 0, 1],
+        "thetaOffset": 45,
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "followMode": "follow-pose",
+      "scene": {},
+      "transforms": {},
+      "topics": {
+        "/LIDAR_TOP": {
+          "visible": true,
+          "colorField": "intensity",
+          "colorMode": "colormap",
+          "colorMap": "turbo"
+        },
+        "/semantic_map": {
+          "visible": true
+        }
+      },
+      "layers": {},
+      "publish": {
+        "type": "point",
+        "poseTopic": "/move_base_simple/goal",
+        "pointTopic": "/clicked_point",
+        "poseEstimateTopic": "/initialpose",
+        "poseEstimateXDeviation": 0.5,
+        "poseEstimateYDeviation": 0.5,
+        "poseEstimateThetaDeviation": 0.26179939
+      }
+    },
+    "Image!37zuv25": {
+      "imageMode": {
+        "imageTopic": "/CAM_FRONT_RIGHT/image_rect_compressed",
+        "calibrationTopic": "/CAM_FRONT_RIGHT/camera_info",
+        "synchronize": false,
+        "rotation": 0,
+        "annotations": {
+          "/CAM_FRONT_RIGHT/annotations": {
+            "visible": true
+          },
+          "/CAM_FRONT_RIGHT/lidar": {
+            "visible": false
+          }
+        }
+      },
+      "cameraState": {
+        "distance": 20,
+        "perspective": true,
+        "phi": 60,
+        "target": [0, 0, 0],
+        "targetOffset": [0, 0, 0],
+        "targetOrientation": [0, 0, 0, 1],
+        "thetaOffset": 45,
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "followMode": "follow-pose",
+      "scene": {},
+      "transforms": {},
+      "topics": {
+        "/LIDAR_TOP": {
+          "visible": true,
+          "colorField": "intensity",
+          "colorMode": "colormap",
+          "colorMap": "turbo"
+        },
+        "/semantic_map": {
+          "visible": true
+        }
+      },
+      "layers": {},
+      "publish": {
+        "type": "point",
+        "poseTopic": "/move_base_simple/goal",
+        "pointTopic": "/clicked_point",
+        "poseEstimateTopic": "/initialpose",
+        "poseEstimateXDeviation": 0.5,
+        "poseEstimateYDeviation": 0.5,
+        "poseEstimateThetaDeviation": 0.26179939
+      }
+    },
+    "3D!12ucir": {
+      "cameraState": {
+        "distance": 35,
+        "perspective": true,
+        "phi": 60,
+        "target": [0, 0, 0],
+        "targetOffset": [0, 0, 0],
+        "targetOrientation": [0, 0, 0, 1],
+        "thetaOffset": 45,
+        "fovy": 45,
+        "near": 1.0,
+        "far": 5000
+      },
+      "scene": {},
+      "transforms": {},
+      "topics": {
+        "/semantic_map": {
+          "visible": true
+        },
+        "/markers/annotations": {
+          "visible": true
+        },
+        "/map": {
+          "visible": true,
+          "colorField": "color",
+          "colorMode": "rgba-fields",
+          "colorMap": "turbo",
+          "gradient": ["#ffffff", "#000000"]
+        },
+        "/drivable_area": {
+          "visible": false,
+          "minColor": "#ffffff",
+          "colorField": "drivable_area",
+          "colorMode": "gradient",
+          "colorMap": "turbo",
+          "gradient": ["#ffffff", "#ffffff00"],
+          "maxValue": 1,
+          "minValue": 0
+        },
+        "/RADAR_FRONT": {
+          "visible": true,
+          "colorField": "x",
+          "colorMode": "colormap",
+          "colorMap": "turbo"
+        },
+        "/RADAR_FRONT_LEFT": {
+          "visible": true,
+          "colorField": "x",
+          "colorMode": "colormap",
+          "colorMap": "turbo"
+        },
+        "/RADAR_FRONT_RIGHT": {
+          "visible": true,
+          "colorField": "x",
+          "colorMode": "colormap",
+          "colorMap": "turbo"
+        },
+        "/RADAR_BACK_LEFT": {
+          "visible": true,
+          "colorField": "x",
+          "colorMode": "colormap",
+          "colorMap": "turbo"
+        },
+        "/RADAR_BACK_RIGHT": {
+          "visible": true,
+          "colorField": "x",
+          "colorMode": "colormap",
+          "colorMap": "turbo"
+        },
+        "/LIDAR_TOP": {
+          "visible": true,
+          "colorField": "intensity",
+          "colorMode": "colormap",
+          "colorMap": "turbo"
+        },
+        "/markers/car": {
+          "visible": true
+        }
+      },
+      "layers": {},
+      "publish": {
+        "type": "point",
+        "poseTopic": "/move_base_simple/goal",
+        "pointTopic": "/clicked_point",
+        "poseEstimateTopic": "/initialpose",
+        "poseEstimateXDeviation": 0.5,
+        "poseEstimateYDeviation": 0.5,
+        "poseEstimateThetaDeviation": 0.26179939
+      },
+      "followMode": "follow-pose",
+      "followTf": "base_link",
+      "imageMode": {}
     },
     "map!2vkib4e": {
       "disabledTopics": [],
-      "zoomLevel": 17
+      "zoomLevel": 17,
+      "layer": "map",
+      "customTileUrl": "",
+      "followTopic": "",
+      "center": {
+        "lat": 1.2988182017789598,
+        "lon": 103.78844261169435
+      },
+      "topicColors": {},
+      "maxNativeZoom": 18
     },
-    "3D Panel!4ey2b8s": {
-      "checkedKeys": [
-        "name:Topics",
-        "t:/tf",
-        "t:/markers/annotations",
-        "t:/pose",
-        "ns:/tf:base_link",
-        "t:/map",
-        "t:/semantic_map",
-        "t:/drivable_area",
-        "t:/LIDAR_TOP",
-        "t:/RADAR_FRONT",
-        "t:/RADAR_FRONT_LEFT",
-        "t:/RADAR_FRONT_RIGHT",
-        "t:/RADAR_BACK_LEFT",
-        "t:/RADAR_BACK_RIGHT"
-      ],
-      "expandedKeys": ["name:Topics", "t:/tf"],
-      "followTf": "base_link",
-      "followOrientation": false,
+    "3D!3edtgyg": {
       "cameraState": {
-        "distance": 111.93497850814407,
         "perspective": false,
-        "phi": 0.03891070297656745,
-        "targetOffset": [1.9192625259993057, -0.5920387880285412, 0],
-        "thetaOffset": -4.486440525404362,
-        "fovy": 0.7853981633974483,
+        "distance": 100,
+        "phi": 45,
+        "thetaOffset": 90,
+        "targetOffset": [0, 0, 0],
+        "target": [0, 0, 0],
+        "targetOrientation": [0, 0, 0, 1],
+        "fovy": 45,
         "near": 0.01,
         "far": 5000
       },
-      "modifiedNamespaceTopics": ["/tf"],
-      "pinTopics": false,
-      "settingsByKey": {},
-      "autoSyncCameraState": false,
-      "autoTextBackgroundColor": true,
-      "diffModeEnabled": true,
-      "useThemeBackgroundColor": true,
-      "customBackgroundColor": "#000000",
-      "followMode": "follow"
+      "scene": {},
+      "transforms": {},
+      "topics": {
+        "/semantic_map": {
+          "visible": true
+        },
+        "/markers/annotations": {
+          "visible": true
+        },
+        "/map": {
+          "visible": true,
+          "colorField": "value",
+          "colorMode": "gradient",
+          "colorMap": "turbo",
+          "gradient": ["#ffffff", "#000000"]
+        },
+        "/drivable_area": {
+          "visible": true,
+          "minColor": "#ffffff",
+          "colorField": "drivable_area",
+          "colorMode": "gradient",
+          "colorMap": "turbo",
+          "gradient": ["#ffffff", "#ffffff00"],
+          "maxValue": 1,
+          "minValue": 0
+        },
+        "/markers/car": {
+          "visible": true
+        }
+      },
+      "layers": {},
+      "publish": {
+        "type": "point",
+        "poseTopic": "/move_base_simple/goal",
+        "pointTopic": "/clicked_point",
+        "poseEstimateTopic": "/initialpose",
+        "poseEstimateXDeviation": 0.5,
+        "poseEstimateYDeviation": 0.5,
+        "poseEstimateThetaDeviation": 0.26179939
+      },
+      "followMode": "follow-pose",
+      "followTf": "base_link",
+      "imageMode": {}
     },
     "Plot!2pb7zl7": {
       "paths": [
         {
-          "value": "/imu.linear_acceleration.x",
+          "value": "/imu.linear_accel.x",
           "enabled": true,
-          "timestampMethod": "headerStamp"
+          "timestampMethod": "receiveTime"
         },
         {
           "value": "/diagnostics.status[:].values[:]{key==\"throttle_sensor\"}.value",
@@ -136,7 +336,13 @@
       "maxYValue": "",
       "showLegend": true,
       "isSynced": true,
-      "xAxisVal": "timestamp"
+      "xAxisVal": "timestamp",
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": false,
+      "sidebarDimension": 240,
+      "foxglovePanelTitle": "Plot"
     },
     "Plot!4792hqu": {
       "paths": [
@@ -165,7 +371,13 @@
       "maxYValue": "",
       "showLegend": true,
       "isSynced": true,
-      "xAxisVal": "timestamp"
+      "xAxisVal": "timestamp",
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": false,
+      "sidebarDimension": 240,
+      "foxglovePanelTitle": "Plot"
     },
     "StateTransitions!3i4dk1l": {
       "paths": [
@@ -173,7 +385,8 @@
           "value": "/diagnostics.status[:].values[:]{key==\"brake_switch\"}.value",
           "timestampMethod": "headerStamp"
         }
-      ]
+      ],
+      "isSynced": true
     },
     "DiagnosticSummary!3equ26v": {
       "minLevel": 0,
@@ -190,11 +403,12 @@
     },
     "SourceInfo!7dc2bd": {},
     "RawMessages!21ab95j": {
-      "topicPath": "/markers/annotations.markers[:]{id==28114}",
+      "topicPath": "/markers/annotations.entities[:]{id==\"6dd2\"}",
       "diffTopicPath": "",
       "diffMethod": "custom",
       "diffEnabled": false,
-      "showFullMessageForDiff": false
+      "showFullMessageForDiff": false,
+      "autoExpandMode": "auto"
     },
     "Tab!1xyw5ix": {
       "activeTabIdx": 0,
@@ -203,17 +417,17 @@
           "title": "Perception",
           "layout": {
             "first": {
-              "first": "ImageViewPanel!1r5tdvh",
+              "first": "Image!s2ii8x",
               "second": {
-                "first": "ImageViewPanel!15kmj7r",
-                "second": "ImageViewPanel!1jn49st",
+                "first": "Image!qd8g5l",
+                "second": "Image!37zuv25",
                 "direction": "row",
                 "splitPercentage": 50
               },
               "direction": "row",
               "splitPercentage": 33.333
             },
-            "second": "3D Panel!3bempa7",
+            "second": "3D!12ucir",
             "direction": "column",
             "splitPercentage": 30
           }
@@ -222,7 +436,7 @@
           "title": "Planning",
           "layout": {
             "first": "map!2vkib4e",
-            "second": "3D Panel!4ey2b8s",
+            "second": "3D!3edtgyg",
             "direction": "row",
             "splitPercentage": 30
           }
@@ -240,15 +454,15 @@
           "title": "Diagnostics",
           "layout": {
             "first": {
-              "first": {
-                "first": "StateTransitions!3i4dk1l",
-                "second": "DiagnosticSummary!3equ26v",
+              "first": "StateTransitions!3i4dk1l",
+              "second": {
+                "first": "DiagnosticSummary!3equ26v",
+                "second": "DiagnosticStatusPanel!4bdyip2",
                 "direction": "column",
-                "splitPercentage": 45
+                "splitPercentage": 27
               },
-              "second": "DiagnosticStatusPanel!4bdyip2",
               "direction": "column",
-              "splitPercentage": 40
+              "splitPercentage": 18
             },
             "second": {
               "first": "SourceInfo!7dc2bd",
@@ -265,10 +479,8 @@
   },
   "globalVariables": {},
   "userNodes": {},
-  "linkedGlobalVariables": [],
   "playbackConfig": {
-    "speed": 1,
-    "messageOrder": "receiveTime"
+    "speed": 1
   },
   "layout": "Tab!1xyw5ix"
 }

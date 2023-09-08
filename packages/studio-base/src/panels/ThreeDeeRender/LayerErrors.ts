@@ -6,29 +6,29 @@ import EventEmitter from "eventemitter3";
 
 import Logger from "@foxglove/log";
 
-type Path = ReadonlyArray<string>;
+export type Path = ReadonlyArray<string>;
 
 const TOPIC_PATH: [string, string] = ["topics", ""];
 
 export class NodeError {
-  path: Path;
-  errorsById?: Map<string, string>;
-  children?: Map<string, NodeError>;
+  public path: Path;
+  public errorsById?: Map<string, string>;
+  public children?: Map<string, NodeError>;
 
-  constructor(path: Path) {
+  public constructor(path: Path) {
     this.path = path;
   }
 
-  errorMessage(): string | undefined {
+  public errorMessage(): string | undefined {
     if (this.errorsById && this.errorsById.size > 0) {
       const errorMessages = Array.from(this.errorsById.values());
-      return errorMessages.join("\n");
+      return errorMessages.join(`, `);
     } else {
       return undefined;
     }
   }
 
-  errorAtPath(path: Path): string | undefined {
+  public errorAtPath(path: Path): string | undefined {
     // eslint-disable-next-line @typescript-eslint/no-this-alias
     let node: NodeError | undefined = this;
     for (const segment of path) {
@@ -40,7 +40,7 @@ export class NodeError {
     return node.errorMessage();
   }
 
-  clone(): NodeError {
+  public clone(): NodeError {
     const clone = new NodeError(this.path);
     clone.errorsById = this.errorsById;
     clone.children = this.children;
@@ -57,9 +57,9 @@ export type LayerErrorEvents = {
 const log = Logger.getLogger(__filename);
 
 export class LayerErrors extends EventEmitter<LayerErrorEvents> {
-  errors = new NodeError([]);
+  public errors = new NodeError([]);
 
-  add(path: Path, errorId: string, errorMessage: string): void {
+  public add(path: Path, errorId: string, errorMessage: string): void {
     // Get or create the node for the given path
     let node = this.errors;
     for (const segment of path) {
@@ -88,43 +88,58 @@ export class LayerErrors extends EventEmitter<LayerErrorEvents> {
     }
   }
 
-  addToTopic(topicId: string, errorId: string, errorMessage: string): void {
+  public addToTopic(topicId: string, errorId: string, errorMessage: string): void {
     TOPIC_PATH[1] = topicId;
     this.add(TOPIC_PATH, errorId, errorMessage);
   }
 
-  remove(path: Path, errorId: string): void {
-    const node = this._getNode(path);
+  public hasError(path: Path, errorId: string): boolean {
+    const node = this.#getNode(path);
+    return node?.errorsById?.has(errorId) === true;
+  }
+
+  public remove(path: Path, errorId: string): void {
+    const node = this.#getNode(path);
     if (node?.errorsById?.has(errorId) === true) {
       node.errorsById.delete(errorId);
       this.emit("remove", path, errorId);
     }
   }
 
-  removeFromTopic(topicId: string, errorId: string): void {
+  public removeFromTopic(topicId: string, errorId: string): void {
     TOPIC_PATH[1] = topicId;
     this.remove(TOPIC_PATH, errorId);
   }
 
-  clearPath(path: Path): void {
-    const node = this._getNode(path);
-    if (node) {
-      node.children?.clear();
-      node.errorsById?.clear();
+  public clearPath(path: Path): void {
+    const node = this.#getNode(path);
+    if (!node) {
+      return;
+    }
+    let cleared = false;
+    if (node.children && node.children.size > 0) {
+      node.children.clear();
+      cleared = true;
+    }
+    if (node.errorsById && node.errorsById.size > 0) {
+      node.errorsById.clear();
+      cleared = true;
+    }
+    if (cleared) {
       this.emit("clear", path);
     }
   }
 
-  clearTopic(topicId: string): void {
+  public clearTopic(topicId: string): void {
     TOPIC_PATH[1] = topicId;
     this.clearPath(TOPIC_PATH);
   }
 
-  clear(): void {
+  public clear(): void {
     this.clearPath([]);
   }
 
-  private _getNode(path: Path): NodeError | undefined {
+  #getNode(path: Path): NodeError | undefined {
     let node: NodeError | undefined = this.errors;
     for (const segment of path) {
       node = node.children?.get(segment);

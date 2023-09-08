@@ -11,6 +11,7 @@
 //   found at http://www.apache.org/licenses/LICENSE-2.0
 //   You may not use this file except in compliance with the License.
 
+import { signal } from "@foxglove/den/async";
 import { Time } from "@foxglove/rostime";
 import NoopMetricsCollector from "@foxglove/studio-base/players/NoopMetricsCollector";
 import RosbridgePlayer from "@foxglove/studio-base/players/RosbridgePlayer";
@@ -42,17 +43,18 @@ const textMessage = ({ text }: { text: string }) => {
 
 let workerInstance: MockRosClient;
 class MockRosClient {
-  constructor() {
+  public constructor() {
+    // eslint-disable-next-line @typescript-eslint/no-this-alias
     workerInstance = this;
   }
 
-  private _topics: string[] = [];
-  private _types: string[] = [];
-  private _typedefs_full_text: string[] = [];
-  private _connectCallback?: () => void;
-  private _messages: any[] = [];
+  #topics: string[] = [];
+  #types: string[] = [];
+  #typedefs_full_text: string[] = [];
+  #connectCallback?: () => void;
+  #messages: any[] = [];
 
-  setup({
+  public setup({
     topics = [],
     types = [],
     typedefs = [],
@@ -63,41 +65,41 @@ class MockRosClient {
     typedefs?: string[];
     messages?: any[];
   }) {
-    this._topics = topics;
-    this._types = types;
-    this._typedefs_full_text = typedefs;
-    this._messages = messages;
+    this.#topics = topics;
+    this.#types = types;
+    this.#typedefs_full_text = typedefs;
+    this.#messages = messages;
 
-    this._connectCallback?.();
+    this.#connectCallback?.();
   }
 
-  on(op: string, callback: () => void) {
+  public on(op: string, callback: () => void) {
     if (op === "connection") {
-      this._connectCallback = callback;
+      this.#connectCallback = callback;
     }
   }
 
-  close() {
+  public close() {
     // no-op
   }
 
-  getTopicsAndRawTypes(callback: (...args: unknown[]) => void) {
+  public getTopicsAndRawTypes(callback: (...args: unknown[]) => void) {
     callback({
-      topics: this._topics,
-      types: this._types,
-      typedefs_full_text: this._typedefs_full_text,
+      topics: this.#topics,
+      types: this.#types,
+      typedefs_full_text: this.#typedefs_full_text,
     });
   }
 
-  getMessagesByTopicName(topicName: string): { message: unknown }[] {
-    return this._messages.filter(({ topic }) => topic === topicName);
+  public getMessagesByTopicName(topicName: string): { message: unknown }[] {
+    return this.#messages.filter(({ topic }) => topic === topicName);
   }
 
-  getNodes(callback: (nodes: string[]) => void, _errCb: (error: Error) => void) {
+  public getNodes(callback: (nodes: string[]) => void, _errCb: (error: Error) => void) {
     callback([]);
   }
 
-  getNodeDetails(
+  public getNodeDetails(
     _node: string,
     callback: (subscriptions: string[], publications: string[], services: string[]) => void,
     _errCb: (error: Error) => void,
@@ -107,23 +109,29 @@ class MockRosClient {
 }
 
 class MockRosTopic {
-  private _name: string = "";
+  #name: string = "";
 
-  constructor({ name }: { name: string }) {
-    this._name = name;
+  public constructor({ name }: { name: string }) {
+    this.#name = name;
   }
 
-  subscribe(callback: (arg: unknown) => void) {
-    workerInstance.getMessagesByTopicName(this._name).forEach(({ message }) => callback(message));
+  public subscribe(callback: (arg: unknown) => void) {
+    workerInstance.getMessagesByTopicName(this.#name).forEach(({ message }) => {
+      callback(message);
+    });
   }
 }
 
-jest.mock("roslib", () => {
+jest.mock("@foxglove/roslibjs", () => {
   return {
     __esModule: true,
     default: {
-      Ros: jest.fn(() => new MockRosClient()),
-      Topic: jest.fn((arg: { name: string }) => new MockRosTopic(arg)),
+      Ros: function Ros() {
+        return new MockRosClient();
+      },
+      Topic: function Topic(arg: { name: string }) {
+        return new MockRosTopic(arg);
+      },
     },
   };
 });
@@ -143,10 +151,10 @@ describe("RosbridgePlayer", () => {
     player.close();
   });
 
-  it("subscribes to topics without errors", (done) => {
+  it("subscribes to topics without errors", async () => {
     workerInstance.setup({
       topics: ["/topic/A"],
-      types: ["/std_msgs/Header"],
+      types: ["/std_msgs/Header", "rosgraph_msgs/Log"],
       typedefs: [
         `std_msgs/Header header
 
@@ -158,6 +166,7 @@ describe("RosbridgePlayer", () => {
       ],
     });
 
+    const sig = signal();
     player.setSubscriptions([{ topic: "/topic/A" }]);
     player.setListener(async ({ activeData }) => {
       const { topics } = activeData ?? {};
@@ -165,16 +174,20 @@ describe("RosbridgePlayer", () => {
         return;
       }
 
-      expect(topics).toStrictEqual([{ name: "/topic/A", datatype: "/std_msgs/Header" }]);
-      done();
+      expect(topics).toStrictEqual<typeof topics>([
+        { name: "/topic/A", schemaName: "/std_msgs/Header" },
+      ]);
+      sig.resolve();
     });
+
+    await sig;
   });
 
   describe("parsedMessages", () => {
     beforeEach(() => {
       workerInstance.setup({
         topics: ["/topic/A", "/topic/B"],
-        types: ["/std_msgs/Header", "text"],
+        types: ["/std_msgs/Header", "text", "rosgraph_msgs/Log"],
         typedefs: [
           `std_msgs/Header header
 
@@ -204,9 +217,10 @@ describe("RosbridgePlayer", () => {
       });
     });
 
-    it("returns parsedMessages with complex type", (done) => {
+    it("returns parsedMessages with complex type", async () => {
       player.setSubscriptions([{ topic: "/topic/A" }]);
 
+      const sig = signal();
       player.setListener(async ({ activeData }) => {
         const { messages } = activeData ?? {};
         if (!messages) {
@@ -222,13 +236,15 @@ describe("RosbridgePlayer", () => {
           },
         });
 
-        done();
+        sig.resolve();
       });
+      await sig;
     });
 
-    it("returns parsedMessages with basic types", (done) => {
+    it("returns parsedMessages with basic types", async () => {
       player.setSubscriptions([{ topic: "/topic/B" }]);
 
+      const sig = signal();
       player.setListener(async ({ activeData }) => {
         const { messages } = activeData ?? {};
         if (!messages) {
@@ -240,8 +256,9 @@ describe("RosbridgePlayer", () => {
           text: "some text",
         });
 
-        done();
+        sig.resolve();
       });
+      await sig;
     });
   });
 });

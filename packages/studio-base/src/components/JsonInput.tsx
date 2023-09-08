@@ -11,28 +11,31 @@
 //   found at http://www.apache.org/licenses/LICENSE-2.0
 //   You may not use this file except in compliance with the License.
 
+import ErrorIcon from "@mui/icons-material/Error";
+import { Typography } from "@mui/material";
+import CodeEditor from "@uiw/react-textarea-code-editor";
 import { isEqual } from "lodash";
-import styled from "styled-components";
+import { makeStyles } from "tss-react/mui";
 
-import { LegacyTextarea } from "@foxglove/studio-base/components/LegacyStyledComponents";
+import Stack from "@foxglove/studio-base/components/Stack";
+import { fonts } from "@foxglove/studio-base/util/sharedStyleConstants";
 import { validationErrorToString, ValidationResult } from "@foxglove/studio-base/util/validators";
 
 const { useState, useCallback, useRef, useLayoutEffect, useEffect } = React;
 
-const SEditBox = styled.div`
-  display: flex;
-  flex-direction: column;
-  min-height: 200px;
-  max-height: 800px;
-`;
-const StyledTextarea = styled(LegacyTextarea)`
-  flex: 1 1 auto;
-  resize: none;
-`;
-const SError = styled.div`
-  color: ${({ theme }) => theme.semanticColors.errorText};
-  padding: 8px 4px;
-`;
+const useStyles = makeStyles()((theme) => ({
+  editor: {
+    backgroundColor: "transparent !important",
+    font: "inherit !important",
+    fontFamily: `${fonts.MONOSPACE} !important`,
+    overflow: "auto",
+  },
+  error: {
+    "*": {
+      color: `${theme.palette.error.main} !important`,
+    },
+  },
+}));
 
 type Value = unknown;
 type OnChange = (obj: unknown) => void;
@@ -40,13 +43,13 @@ type ParseAndStringifyFn = {
   stringify: (obj: unknown) => string;
   parse: (val: string) => unknown;
 };
-export type BaseProps = {
+type BaseProps = {
+  dataTestId?: string;
   dataValidator?: (data: unknown) => ValidationResult | undefined;
-  inputStyle?: {
-    [attr: string]: string | number;
-  };
   onChange?: OnChange;
   onError?: (err: string) => void;
+  readOnly?: boolean;
+  maxHeight?: number | "auto" | "none";
   value: Value;
 };
 
@@ -55,15 +58,18 @@ export type BaseProps = {
  * Any external value change will cause the input string to change and trigger new validations.
  * Only valid internal value change will call onChange. Any data processing and validation error will trigger onError.
  */
-export function ValidatedInputBase({
+function ValidatedInputBase({
+  dataTestId,
   dataValidator = () => undefined,
-  inputStyle = {},
   onChange,
   onError,
   parse,
+  readOnly = false,
+  maxHeight,
   stringify,
   value,
 }: BaseProps & ParseAndStringifyFn): JSX.Element {
+  const { classes, cx } = useStyles();
   const [error, setError] = useState<string>("");
   const [inputStr, setInputStr] = useState<string>("");
   const prevIncomingVal = useRef<unknown>("");
@@ -103,7 +109,10 @@ export function ValidatedInputBase({
     [dataValidator, parse, value],
   );
 
-  // when not in editing mode, whenever the incoming value changes, we'll compare the new value with prevIncomingVal, and reset local state values if they are different
+  /**
+   * when not in editing mode whenever the incoming value changes
+   * we'll compare the new value with prevIncomingVal and reset local state values if they are different
+   */
   useLayoutEffect(() => {
     if (!isEditing && value !== prevIncomingVal.current) {
       if (isEqual(value, prevIncomingVal.current)) {
@@ -160,26 +169,44 @@ export function ValidatedInputBase({
 
   return (
     <>
-      <StyledTextarea
-        data-test="validated-input"
-        style={inputStyle}
+      <CodeEditor
+        className={cx(classes.editor, { [classes.error]: error.length > 0 })}
+        readOnly={readOnly}
+        data-testid={dataTestId ?? `validated-input-${JSON.stringify(inputStr)}`}
         ref={inputRef}
         value={inputStr}
         onChange={handleChange}
+        language="json"
+        onBlur={() => {
+          setIsEditing(false);
+        }}
+        padding={12}
+        style={{ maxHeight: maxHeight ?? 300 }}
       />
-      {error.length > 0 && <SError>{error}</SError>}
+      {error.length > 0 && (
+        <Stack direction="row" alignItems="center" gap={0.25} padding={0.5}>
+          <ErrorIcon fontSize="inherit" color="error" />
+          <Typography variant="caption" color="error.main">
+            {error}
+          </Typography>
+        </Stack>
+      )}
     </>
   );
 }
 
 export default function JsonInput(props: BaseProps): JSX.Element {
   function stringify(val: unknown) {
+    if (val === '""') {
+      return val;
+    }
+
     return JSON.stringify(val, undefined, 2) ?? "";
   }
 
   return (
-    <SEditBox>
-      <ValidatedInputBase parse={JSON.parse} stringify={stringify} {...props} />
-    </SEditBox>
+    <Stack>
+      <ValidatedInputBase parse={JSON.parse} stringify={stringify} {...props} maxHeight="none" />
+    </Stack>
   );
 }

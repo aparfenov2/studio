@@ -10,22 +10,19 @@
 //   This source code is licensed under the Apache License, Version 2.0,
 //   found at http://www.apache.org/licenses/LICENSE-2.0
 //   You may not use this file except in compliance with the License.
-import styled from "styled-components";
 
-export const SCREENSHOT_VIEWPORT = {
-  width: 1001,
-  height: 745,
+import { CSSProperties, PropsWithChildren } from "react";
+
+type ExpectedResultProps = {
+  top?: CSSProperties["top"];
+  left?: CSSProperties["left"];
 };
 
-export const ScreenshotSizedContainer = (props: {
-  children: React.ReactNode;
-}): React.ReactElement => <div style={SCREENSHOT_VIEWPORT}>{props.children}</div>;
-
-export const SExpectedResult = styled.div`
-  position: fixed;
-  top: 25px;
-  left: 0;
-  color: lightgreen;
-  margin: 16px;
-  z-index: 1000;
-`;
+export function ExpectedResult(props: PropsWithChildren<ExpectedResultProps>): React.ReactElement {
+  const { children, top = 25, left = 0 } = props;
+  return (
+    <div style={{ position: "fixed", top, left, color: "lightgreen", margin: 16, zIndex: 1000 }}>
+      {children}
+    </div>
+  );
+}

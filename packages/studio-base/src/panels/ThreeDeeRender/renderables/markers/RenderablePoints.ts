@@ -4,64 +4,62 @@
 
 import * as THREE from "three";
 
-import { DynamicBufferGeometry } from "../../DynamicBufferGeometry";
-import type { Renderer } from "../../Renderer";
-import { approxEquals } from "../../math";
-import { Marker } from "../../ros";
 import { RenderableMarker } from "./RenderableMarker";
-import { markerHasTransparency, pointsMaterial, releasePointsMaterial } from "./materials";
+import { markerHasTransparency, makePointsMaterial } from "./materials";
+import { DynamicBufferGeometry } from "../../DynamicBufferGeometry";
+import type { IRenderer } from "../../IRenderer";
+import { Marker } from "../../ros";
 
 export class RenderablePoints extends RenderableMarker {
-  geometry: DynamicBufferGeometry<Float32Array, Float32ArrayConstructor>;
-  points: THREE.Points;
+  #geometry: DynamicBufferGeometry;
+  #points: THREE.Points<DynamicBufferGeometry, THREE.PointsMaterial>;
 
-  constructor(topic: string, marker: Marker, renderer: Renderer) {
-    super(topic, marker, renderer);
+  public constructor(
+    topic: string,
+    marker: Marker,
+    receiveTime: bigint | undefined,
+    renderer: IRenderer,
+  ) {
+    super(topic, marker, receiveTime, renderer);
 
-    this.geometry = new DynamicBufferGeometry(Float32Array);
-    this.geometry.createAttribute("position", 3);
-    this.geometry.createAttribute("color", 4);
+    this.#geometry = new DynamicBufferGeometry();
+    this.#geometry.createAttribute("position", Float32Array, 3);
+    this.#geometry.createAttribute("color", Uint8Array, 4, true);
 
-    const material = pointsMaterial(marker, renderer.materialCache);
-    this.points = new THREE.Points(this.geometry, material);
-    this.add(this.points);
+    this.#points = new THREE.Points(this.#geometry, makePointsMaterial(marker));
+    this.add(this.#points);
 
-    this.update(marker);
+    this.update(marker, receiveTime);
   }
 
-  override dispose(): void {
-    releasePointsMaterial(this.userData.marker, this._renderer.materialCache);
+  public override dispose(): void {
+    this.#points.material.dispose();
   }
 
-  override update(marker: Marker): void {
+  public override update(newMarker: Marker, receiveTime: bigint | undefined): void {
     const prevMarker = this.userData.marker;
-    super.update(marker);
+    super.update(newMarker, receiveTime);
+    const marker = this.userData.marker;
 
-    const prevWidth = prevMarker.scale.x;
-    const prevHeight = prevMarker.scale.y;
-    const prevTransparent = markerHasTransparency(prevMarker);
-    const width = marker.scale.x;
-    const height = marker.scale.y;
     const transparent = markerHasTransparency(marker);
-
-    if (
-      !approxEquals(prevWidth, width) ||
-      !approxEquals(prevHeight, height) ||
-      prevTransparent !== transparent
-    ) {
-      releasePointsMaterial(prevMarker, this._renderer.materialCache);
-      this.points.material = pointsMaterial(marker, this._renderer.materialCache);
+    if (transparent !== markerHasTransparency(prevMarker)) {
+      this.#points.material.transparent = transparent;
+      this.#points.material.depthWrite = !transparent;
+      this.#points.material.needsUpdate = true;
     }
 
-    this.geometry.resize(marker.points.length);
-    this._setPositions(marker);
-    this._setColors(marker);
+    this.#points.material.size = marker.scale.x;
+
+    const pointsLength = marker.points.length;
+    this.#geometry.resize(pointsLength);
+    this.#setPositions(marker, pointsLength);
+    this.#setColors(marker, pointsLength);
   }
 
-  private _setPositions(marker: Marker): void {
-    const attribute = this.geometry.getAttribute("position") as THREE.BufferAttribute;
+  #setPositions(marker: Marker, pointsLength: number): void {
+    const attribute = this.#geometry.getAttribute("position") as THREE.BufferAttribute;
     const positions = attribute.array as Float32Array;
-    for (let i = 0; i < marker.points.length; i++) {
+    for (let i = 0; i < pointsLength; i++) {
       const point = marker.points[i]!;
       positions[i * 3 + 0] = point.x;
       positions[i * 3 + 1] = point.y;
@@ -70,15 +68,15 @@ export class RenderablePoints extends RenderableMarker {
     attribute.needsUpdate = true;
   }
 
-  private _setColors(marker: Marker): void {
+  #setColors(marker: Marker, pointsLength: number): void {
     // Converts color-per-point to a flattened typed array
-    const attribute = this.geometry.getAttribute("color") as THREE.BufferAttribute;
-    const rgbaData = attribute.array as Float32Array;
-    this._markerColorsToLinear(marker, (color, i) => {
-      rgbaData[4 * i + 0] = color[0];
-      rgbaData[4 * i + 1] = color[1];
-      rgbaData[4 * i + 2] = color[2];
-      rgbaData[4 * i + 3] = color[3];
+    const attribute = this.#geometry.getAttribute("color") as THREE.BufferAttribute;
+    const rgbaData = attribute.array as Uint8Array;
+    this._markerColorsToLinear(marker, pointsLength, (color, i) => {
+      rgbaData[4 * i + 0] = (color[0] * 255) | 0;
+      rgbaData[4 * i + 1] = (color[1] * 255) | 0;
+      rgbaData[4 * i + 2] = (color[2] * 255) | 0;
+      rgbaData[4 * i + 3] = (color[3] * 255) | 0;
     });
     attribute.needsUpdate = true;
   }

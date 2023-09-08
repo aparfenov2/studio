@@ -2,79 +2,83 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
-/* eslint-disable no-underscore-dangle */
-
 import * as THREE from "three";
 
-import type { Renderer } from "../../Renderer";
-import { rgbaEqual } from "../../color";
+import { RenderableMarker } from "./RenderableMarker";
+import { makeStandardMaterial } from "./materials";
+import type { IRenderer } from "../../IRenderer";
+import { rgbToThreeColor } from "../../color";
 import { cylinderSubdivisions, DetailLevel } from "../../lod";
 import { Marker } from "../../ros";
-import { RenderableMarker } from "./RenderableMarker";
-import { releaseStandardMaterial, standardMaterial } from "./materials";
 
 export class RenderableCylinder extends RenderableMarker {
-  private static _lod: DetailLevel | undefined;
-  private static _geometry: THREE.CylinderGeometry | undefined;
-  private static _edgesGeometry: THREE.EdgesGeometry | undefined;
+  #mesh: THREE.Mesh<THREE.CylinderGeometry, THREE.MeshStandardMaterial>;
+  #outline: THREE.LineSegments;
 
-  mesh: THREE.Mesh<THREE.CylinderGeometry, THREE.Material>;
-  outline: THREE.LineSegments | undefined;
-
-  constructor(topic: string, marker: Marker, renderer: Renderer) {
-    super(topic, marker, renderer);
+  public constructor(
+    topic: string,
+    marker: Marker,
+    receiveTime: bigint | undefined,
+    renderer: IRenderer,
+  ) {
+    super(topic, marker, receiveTime, renderer);
 
     // Cylinder mesh
-    const material = standardMaterial(marker.color, renderer.materialCache);
-    this.mesh = new THREE.Mesh(RenderableCylinder.geometry(renderer.maxLod), material);
-    this.mesh.castShadow = true;
-    this.mesh.receiveShadow = true;
-    this.add(this.mesh);
+    const material = makeStandardMaterial(marker.color);
+    const cylinderGeometry = renderer.sharedGeometry.getGeometry(
+      `${this.constructor.name}-cylinder-${renderer.maxLod}`,
+      () => createGeometry(renderer.maxLod),
+    );
+    this.#mesh = new THREE.Mesh(cylinderGeometry, material);
+    this.#mesh.castShadow = true;
+    this.#mesh.receiveShadow = true;
+    this.add(this.#mesh);
 
     // Cylinder outline
-    this.outline = new THREE.LineSegments(
-      RenderableCylinder.edgesGeometry(renderer.maxLod),
-      renderer.materialCache.outlineMaterial,
+    const edgesGeometry = renderer.sharedGeometry.getGeometry(
+      `${this.constructor.name}-edges-${renderer.maxLod}`,
+      () => createEdgesGeometry(cylinderGeometry),
     );
-    this.outline.userData.picking = false;
-    this.mesh.add(this.outline);
+    this.#outline = new THREE.LineSegments(edgesGeometry, renderer.outlineMaterial);
+    this.#outline.userData.picking = false;
+    this.#mesh.add(this.#outline);
 
-    this.update(marker);
+    this.update(marker, receiveTime);
   }
 
-  override dispose(): void {
-    releaseStandardMaterial(this.userData.marker.color, this._renderer.materialCache);
+  public override dispose(): void {
+    this.#mesh.material.dispose();
   }
 
-  override update(marker: Marker): void {
-    const prevMarker = this.userData.marker;
-    super.update(marker);
+  public override update(newMarker: Marker, receiveTime: bigint | undefined): void {
+    super.update(newMarker, receiveTime);
+    const marker = this.userData.marker;
 
-    if (!rgbaEqual(marker.color, prevMarker.color)) {
-      releaseStandardMaterial(prevMarker.color, this._renderer.materialCache);
-      this.mesh.material = standardMaterial(marker.color, this._renderer.materialCache);
+    const transparent = marker.color.a < 1;
+    if (transparent !== this.#mesh.material.transparent) {
+      this.#mesh.material.transparent = transparent;
+      this.#mesh.material.depthWrite = !transparent;
+      this.#mesh.material.needsUpdate = true;
     }
+
+    this.#outline.visible = this.getSettings()?.showOutlines ?? true;
+
+    rgbToThreeColor(this.#mesh.material.color, marker.color);
+    this.#mesh.material.opacity = marker.color.a;
 
     this.scale.set(marker.scale.x, marker.scale.y, marker.scale.z);
   }
+}
+function createGeometry(lod: DetailLevel): THREE.CylinderGeometry {
+  const subdivisions = cylinderSubdivisions(lod);
+  const cylinderGeometry = new THREE.CylinderGeometry(0.5, 0.5, 1, subdivisions);
+  cylinderGeometry.rotateX(Math.PI / 2); // Make the cylinder geometry stand upright
+  cylinderGeometry.computeBoundingSphere();
+  return cylinderGeometry;
+}
 
-  static geometry(lod: DetailLevel): THREE.CylinderGeometry {
-    if (!RenderableCylinder._geometry || lod !== RenderableCylinder._lod) {
-      const subdivisions = cylinderSubdivisions(lod);
-      RenderableCylinder._geometry = new THREE.CylinderGeometry(0.5, 0.5, 1, subdivisions);
-      RenderableCylinder._geometry.rotateX(Math.PI / 2); // Make the cylinder geometry stand upright
-      RenderableCylinder._geometry.computeBoundingSphere();
-      RenderableCylinder._lod = lod;
-    }
-    return RenderableCylinder._geometry;
-  }
-
-  static edgesGeometry(lod: DetailLevel): THREE.EdgesGeometry {
-    if (!RenderableCylinder._edgesGeometry) {
-      const geometry = RenderableCylinder.geometry(lod);
-      RenderableCylinder._edgesGeometry = new THREE.EdgesGeometry(geometry, 40);
-      RenderableCylinder._edgesGeometry.computeBoundingSphere();
-    }
-    return RenderableCylinder._edgesGeometry;
-  }
+function createEdgesGeometry(geometry: THREE.CylinderGeometry): THREE.EdgesGeometry {
+  const cylinderEdgesGeometry = new THREE.EdgesGeometry(geometry, 40);
+  cylinderEdgesGeometry.computeBoundingSphere();
+  return cylinderEdgesGeometry;
 }

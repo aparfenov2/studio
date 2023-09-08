@@ -17,13 +17,13 @@ import isDesktopApp from "@foxglove/studio-base/util/isDesktopApp";
 
 // A file reader that reads from a remote HTTP URL, for usage in the browser (not for node.js).
 export default class BrowserHttpReader implements FileReader {
-  private _url: string;
+  #url: string;
 
-  constructor(url: string) {
-    this._url = url;
+  public constructor(url: string) {
+    this.#url = url;
   }
 
-  async open(): Promise<{ size: number; identifier?: string }> {
+  public async open(): Promise<{ size: number; identifier?: string }> {
     let response: Response;
     try {
       // Make a GET request and then immediately cancel it. This is more robust than a HEAD request,
@@ -32,8 +32,11 @@ export default class BrowserHttpReader implements FileReader {
       // Note that we cannot use `range: "bytes=0-1"` or so, because then we can't get the actual
       // file size without making Content-Range a CORS header, therefore making all this a bit less
       // robust.
+      // "no-store" forces an unconditional remote request. When the browser's cache is populated,
+      // it may add a `range` header to the request, which causes some servers to omit the
+      // `accept-ranges` header in the response.
       const controller = new AbortController();
-      response = await fetch(this._url, { signal: controller.signal });
+      response = await fetch(this.#url, { signal: controller.signal, cache: "no-store" });
       controller.abort();
     } catch (error) {
       let errMsg = `Fetching remote file failed. ${error}`;
@@ -47,7 +50,7 @@ export default class BrowserHttpReader implements FileReader {
     }
     if (!response.ok) {
       throw new Error(
-        `Fetching remote file failed. <${this._url}> Status code: ${response.status}.`,
+        `Fetching remote file failed. <${this.#url}> Status code: ${response.status}.`,
       );
     }
     if (response.headers.get("accept-ranges") !== "bytes") {
@@ -63,7 +66,7 @@ export default class BrowserHttpReader implements FileReader {
     }
     const size = response.headers.get("content-length");
     if (size == undefined) {
-      throw new Error(`Remote file is missing file size. <${this._url}>`);
+      throw new Error(`Remote file is missing file size. <${this.#url}>`);
     }
     return {
       size: parseInt(size),
@@ -72,9 +75,9 @@ export default class BrowserHttpReader implements FileReader {
     };
   }
 
-  fetch(offset: number, length: number): FileStream {
+  public fetch(offset: number, length: number): FileStream {
     const headers = new Headers({ range: `bytes=${offset}-${offset + (length - 1)}` });
-    const reader = new FetchReader(this._url, { headers });
+    const reader = new FetchReader(this.#url, { headers });
     reader.read();
     return reader;
   }

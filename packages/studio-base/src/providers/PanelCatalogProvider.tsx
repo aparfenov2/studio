@@ -3,17 +3,18 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import { PropsWithChildren, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 
 import { AppSetting } from "@foxglove/studio-base/AppSetting";
 import Panel from "@foxglove/studio-base/components/Panel";
-import PanelExtensionAdapter from "@foxglove/studio-base/components/PanelExtensionAdapter";
-import { useExtensionRegistry } from "@foxglove/studio-base/context/ExtensionRegistryContext";
+import { PanelExtensionAdapter } from "@foxglove/studio-base/components/PanelExtensionAdapter";
+import { useExtensionCatalog } from "@foxglove/studio-base/context/ExtensionCatalogContext";
 import PanelCatalogContext, {
   PanelCatalog,
   PanelInfo,
 } from "@foxglove/studio-base/context/PanelCatalogContext";
 import { useAppConfigurationValue } from "@foxglove/studio-base/hooks/useAppConfigurationValue";
-import panels from "@foxglove/studio-base/panels";
+import * as panels from "@foxglove/studio-base/panels";
 import { SaveConfig } from "@foxglove/studio-base/types/panels";
 
 type PanelProps = {
@@ -25,19 +26,12 @@ export default function PanelCatalogProvider(
   props: PropsWithChildren<unknown>,
 ): React.ReactElement {
   const [showDebugPanels = false] = useAppConfigurationValue<boolean>(AppSetting.SHOW_DEBUG_PANELS);
-  const [enableLegacyPlotPanel = false] = useAppConfigurationValue<boolean>(
-    AppSetting.ENABLE_LEGACY_PLOT_PANEL,
-  );
-  const [enableNew3DPanel = false] = useAppConfigurationValue<boolean>(
-    AppSetting.EXPERIMENTAL_3D_PANEL,
-  );
+  const { t } = useTranslation("panels");
 
-  const extensionRegistry = useExtensionRegistry();
+  const extensionPanels = useExtensionCatalog((state) => state.installedPanels);
 
   const wrappedExtensionPanels = useMemo<PanelInfo[]>(() => {
-    const extensionPanels = extensionRegistry.getRegisteredPanels();
-
-    return extensionPanels.map((panel) => {
+    return Object.values(extensionPanels ?? {}).map((panel) => {
       const panelType = `${panel.extensionName}.${panel.registration.name}`;
       const PanelWrapper = (panelProps: PanelProps) => {
         return (
@@ -57,36 +51,31 @@ export default function PanelCatalogProvider(
         title: panel.registration.name,
         type: panelType,
         module: async () => ({ default: Panel(PanelWrapper) }),
+        extensionNamespace: panel.extensionNamespace,
       };
     });
-  }, [extensionRegistry]);
+  }, [extensionPanels]);
+
+  // Re-call the function when the language changes to ensure that the panel's information is successfully translated
+  const allPanelsInfo = useMemo(() => {
+    return {
+      builtin: panels.getBuiltin(t),
+      debug: panels.getDebug(t),
+    };
+  }, [t]);
 
   const allPanels = useMemo(() => {
-    return [
-      ...panels.new3DPanel,
-      ...panels.builtin,
-      ...panels.debug,
-      ...panels.hidden,
-      ...panels.legacyPlot,
-      ...wrappedExtensionPanels,
-    ];
-  }, [wrappedExtensionPanels]);
+    return [...allPanelsInfo.builtin, ...allPanelsInfo.debug, ...wrappedExtensionPanels];
+  }, [wrappedExtensionPanels, allPanelsInfo]);
 
   const visiblePanels = useMemo(() => {
-    const new3DPanels = enableNew3DPanel ? panels.new3DPanel : [];
-    const legacyPlotPanels = enableLegacyPlotPanel ? panels.legacyPlot : [];
-
-    // debug panels are hidden by default, users can enable them within app settings
-    return showDebugPanels
-      ? [
-          ...new3DPanels,
-          ...panels.builtin,
-          ...panels.debug,
-          ...legacyPlotPanels,
-          ...wrappedExtensionPanels,
-        ]
-      : [...new3DPanels, ...panels.builtin, ...legacyPlotPanels, ...wrappedExtensionPanels];
-  }, [enableNew3DPanel, enableLegacyPlotPanel, showDebugPanels, wrappedExtensionPanels]);
+    const panelList = [...allPanelsInfo.builtin];
+    if (showDebugPanels) {
+      panelList.push(...allPanelsInfo.debug);
+    }
+    panelList.push(...wrappedExtensionPanels);
+    return panelList;
+  }, [showDebugPanels, wrappedExtensionPanels, allPanelsInfo]);
 
   const panelsByType = useMemo(() => {
     const byType = new Map<string, PanelInfo>();

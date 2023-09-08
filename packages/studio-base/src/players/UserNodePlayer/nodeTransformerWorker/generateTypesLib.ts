@@ -42,7 +42,7 @@ export const typedArrayMap = new Map<string, string>([
 ]);
 
 function safeString(str: string): string {
-  return JSON.stringify(str) as string;
+  return JSON.stringify(str)!;
 }
 
 export const generateTypesInterface = (datatypes: RosDatatypes): string => {
@@ -114,7 +114,9 @@ function generateTypesByTopicInterface(topics: Topic[]): string {
     export type MessageTypeByTopic = {`;
 
   for (const topic of topics) {
-    src += `${safeString(topic.name)}: MessageTypeBySchemaName[${safeString(topic.datatype)}]\n`;
+    src += `${safeString(topic.name)}: MessageTypeBySchemaName[${safeString(
+      topic.schemaName ?? "",
+    )}]\n`;
   }
 
   src += "\n};";
@@ -123,7 +125,23 @@ function generateTypesByTopicInterface(topics: Topic[]): string {
 
 function generateTypesLib(args: Args): string {
   const typesByTopic = generateTypesByTopicInterface(args.topics);
-  const typesBySchemaName = generateTypesInterface(args.datatypes);
+
+  // A topic may reference a datatype that we don't have in args.datatypes.
+  // This happens for some data sources if nothing's subscribe to a topic and we never get info
+  // about the specific datatype.
+  //
+  // We want the types library to still generate and compile so we use empty placeholders for such datatypes.
+  const allDatatypes = new Map(args.datatypes);
+  for (const topic of args.topics) {
+    if (topic.schemaName == undefined || !allDatatypes.has(topic.schemaName)) {
+      allDatatypes.set(topic.schemaName ?? "", {
+        name: topic.schemaName,
+        definitions: [],
+      });
+    }
+  }
+
+  const typesBySchemaName = generateTypesInterface(allDatatypes);
 
   const src = `
 // NOTE:

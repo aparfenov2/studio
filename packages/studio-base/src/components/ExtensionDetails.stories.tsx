@@ -11,17 +11,17 @@
 //   found at http://www.apache.org/licenses/LICENSE-2.0
 //   You may not use this file except in compliance with the License.
 
+import { StoryObj } from "@storybook/react";
 import { useState } from "react";
 
 import { ExtensionDetails } from "@foxglove/studio-base/components/ExtensionDetails";
 import AppConfigurationContext from "@foxglove/studio-base/context/AppConfigurationContext";
-import ExtensionLoaderContext, {
-  ExtensionLoader,
-} from "@foxglove/studio-base/context/ExtensionLoaderContext";
 import ExtensionMarketplaceContext, {
   ExtensionMarketplace,
   ExtensionMarketplaceDetail,
 } from "@foxglove/studio-base/context/ExtensionMarketplaceContext";
+import ExtensionCatalogProvider from "@foxglove/studio-base/providers/ExtensionCatalogProvider";
+import { ExtensionLoader } from "@foxglove/studio-base/services/ExtensionLoader";
 import { makeMockAppConfiguration } from "@foxglove/studio-base/util/makeMockAppConfiguration";
 
 export default {
@@ -30,13 +30,13 @@ export default {
 };
 
 const MockExtensionLoader: ExtensionLoader = {
+  namespace: "local",
   getExtensions: async () => [],
   loadExtension: async (_id: string) => "",
-  downloadExtension: async (_url: string) => new Uint8Array(),
   installExtension: async (_foxeFileData: Uint8Array) => {
     throw new Error("MockExtensionLoader cannot install extensions");
   },
-  uninstallExtension: async (_id: string) => false,
+  uninstallExtension: async (_id: string) => undefined,
 };
 
 const MockExtensionMarketplace: ExtensionMarketplace = {
@@ -50,6 +50,7 @@ const extension: ExtensionMarketplaceDetail = {
   id: "publisher.storyextension",
   name: "Extension Name",
   description: "Extension sample description",
+  qualifiedName: "Qualified Extension Name",
   publisher: "Publisher",
   homepage: "https://foxglove.dev/",
   license: "MIT",
@@ -66,16 +67,18 @@ const extension: ExtensionMarketplaceDetail = {
   },
 };
 
-export function Details(): JSX.Element {
-  const [config] = useState(() => makeMockAppConfiguration());
+export const Details: StoryObj = {
+  render: function Story() {
+    const [config] = useState(() => makeMockAppConfiguration());
 
-  return (
-    <AppConfigurationContext.Provider value={config}>
-      <ExtensionLoaderContext.Provider value={MockExtensionLoader}>
-        <ExtensionMarketplaceContext.Provider value={MockExtensionMarketplace}>
-          <ExtensionDetails extension={extension} onClose={() => {}} installed={false} />
-        </ExtensionMarketplaceContext.Provider>
-      </ExtensionLoaderContext.Provider>
-    </AppConfigurationContext.Provider>
-  );
-}
+    return (
+      <AppConfigurationContext.Provider value={config}>
+        <ExtensionCatalogProvider loaders={[MockExtensionLoader]}>
+          <ExtensionMarketplaceContext.Provider value={MockExtensionMarketplace}>
+            <ExtensionDetails extension={extension} onClose={() => {}} installed={false} />
+          </ExtensionMarketplaceContext.Provider>
+        </ExtensionCatalogProvider>
+      </AppConfigurationContext.Provider>
+    );
+  },
+};

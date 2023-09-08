@@ -10,7 +10,6 @@
 //   This source code is licensed under the Apache License, Version 2.0,
 //   found at http://www.apache.org/licenses/LICENSE-2.0
 //   You may not use this file except in compliance with the License.
-import { captureException } from "@sentry/core";
 import { compact, flatMap, xor, uniq } from "lodash";
 import {
   createRemoveUpdate,
@@ -30,6 +29,7 @@ import {
   ConfigsPayload,
   SaveConfigsPayload,
 } from "@foxglove/studio-base/context/CurrentLayoutContext/actions";
+import { reportError } from "@foxglove/studio-base/reportError";
 import { TabConfig, TabLocation, TabPanelConfig } from "@foxglove/studio-base/types/layouts";
 import {
   PanelConfig,
@@ -39,6 +39,9 @@ import {
 import { TAB_PANEL_TYPE } from "@foxglove/studio-base/util/globalConstants";
 
 const log = Logger.getLogger(__filename);
+
+/** Key injected into panel configs for user-selected title (overrides setDefaultPanelTitle) */
+export const PANEL_TITLE_CONFIG_KEY = "foxglovePanelTitle";
 
 // given a panel type, create a unique id for a panel
 // with the type embedded within the id
@@ -61,7 +64,7 @@ export function isTabPanel(panelId: string): boolean {
 }
 
 export function isTabPanelConfig(config: PanelConfig | undefined): config is TabPanelConfig {
-  return config != undefined && "tabs" in config && "activeTabIndex" in config;
+  return config != undefined && "tabs" in config && "activeTabIdx" in config;
 }
 
 // Traverses `tree` to find the path to the specified `node`
@@ -122,7 +125,6 @@ function getLayoutWithNewPanelIds(
       newLayout[key] = layout[key];
     }
   }
-  // TODO: Refactor above to allow for better typing here.
   return newLayout as unknown as MosaicNode<string>;
 }
 
@@ -265,7 +267,7 @@ export function getPanelIdsInsideTabPanels(panelIds: string[], savedProps: Saved
     if (tabProps?.tabs) {
       tabProps.tabs.forEach((tab: TabConfig) => {
         tabLayouts.push(
-          tab.layout as MosaicNode<string>,
+          tab.layout!,
           ...getPanelIdsInsideTabPanels(getLeaves(tab.layout ?? ReactNull), savedProps),
         );
       });
@@ -295,13 +297,13 @@ export const validateTabPanelConfig = (config?: PanelConfig): config is TabPanel
       "A non-Tab panel config is being operated on as if it were a Tab panel.",
     );
     log.info(`Invalid Tab panel config: ${error.message}`, config);
-    captureException(error);
+    reportError(error);
     return false;
   }
   if (config.activeTabIdx >= config.tabs.length) {
     const error = new Error("A Tab panel has an activeTabIdx for a nonexistent tab.");
     log.info(`Invalid Tab panel config: ${error.message}`, config);
-    captureException(error);
+    reportError(error);
     return false;
   }
   return true;
@@ -343,7 +345,7 @@ export const removePanelFromTabPanel = (
     newTree = undefined;
   } else {
     const update = createRemoveUpdate(currentTabLayout ?? ReactNull, path);
-    newTree = updateTree<string>(currentTabLayout as MosaicNode<string>, [update]);
+    newTree = updateTree<string>(currentTabLayout!, [update]);
   }
 
   const saveConfigsPayload = {
@@ -361,7 +363,7 @@ export const createAddUpdates = (
   if (tree == undefined) {
     return [];
   }
-  const node = getNodeAtPath(tree, newPath) as MosaicNode<string>;
+  const node = getNodeAtPath(tree, newPath)!;
   const before = position === "left" || position === "top";
   const [first, second] = before ? [panelId, node] : [node, panelId];
   const direction: MosaicDirection = position === "left" || position === "right" ? "row" : "column";

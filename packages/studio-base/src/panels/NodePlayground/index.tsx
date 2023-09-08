@@ -11,41 +11,40 @@
 //   found at http://www.apache.org/licenses/LICENSE-2.0
 //   You may not use this file except in compliance with the License.
 
-import { useTheme, Spinner, SpinnerSize } from "@fluentui/react";
-import ArrowLeftIcon from "@mdi/svg/svg/arrow-left.svg";
-import PlusIcon from "@mdi/svg/svg/plus.svg";
-import { Divider, Input, Link, Stack } from "@mui/material";
-import { Suspense, useCallback, useEffect, useState } from "react";
-import styled from "styled-components";
+import AddIcon from "@mui/icons-material/Add";
+import ArrowBackIcon from "@mui/icons-material/ArrowBack";
+import {
+  Button,
+  CircularProgress,
+  Container,
+  Divider,
+  IconButton,
+  Input,
+  Link,
+  Typography,
+  inputClasses,
+} from "@mui/material";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { makeStyles } from "tss-react/mui";
 import { v4 as uuidv4 } from "uuid";
 
-import Button from "@foxglove/studio-base/components/Button";
-import Icon from "@foxglove/studio-base/components/Icon";
+import { SettingsTreeAction, SettingsTreeNodes } from "@foxglove/studio";
+import EmptyState from "@foxglove/studio-base/components/EmptyState";
 import Panel from "@foxglove/studio-base/components/Panel";
-import { usePanelContext } from "@foxglove/studio-base/components/PanelContext";
 import PanelToolbar from "@foxglove/studio-base/components/PanelToolbar";
-import {
-  SettingsTreeAction,
-  SettingsTreeRoots,
-} from "@foxglove/studio-base/components/SettingsTreeEditor/types";
-import TextContent from "@foxglove/studio-base/components/TextContent";
+import Stack from "@foxglove/studio-base/components/Stack";
 import {
   LayoutState,
   useCurrentLayoutActions,
   useCurrentLayoutSelector,
 } from "@foxglove/studio-base/context/CurrentLayoutContext";
 import { useUserNodeState } from "@foxglove/studio-base/context/UserNodeStateContext";
-import { useWorkspace } from "@foxglove/studio-base/context/WorkspaceContext";
 import BottomBar from "@foxglove/studio-base/panels/NodePlayground/BottomBar";
 import Sidebar from "@foxglove/studio-base/panels/NodePlayground/Sidebar";
-import Playground from "@foxglove/studio-base/panels/NodePlayground/playground-icon.svg";
-import { HelpInfoStore, useHelpInfo } from "@foxglove/studio-base/providers/HelpInfoProvider";
-import { usePanelSettingsTreeUpdate } from "@foxglove/studio-base/providers/PanelSettingsEditorContextProvider";
-import { UserNodes } from "@foxglove/studio-base/types/panels";
-import { colors } from "@foxglove/studio-base/util/sharedStyleConstants";
+import { usePanelSettingsTreeUpdate } from "@foxglove/studio-base/providers/PanelStateContextProvider";
+import { SaveConfig, UserNodes } from "@foxglove/studio-base/types/panels";
 
 import Config from "./Config";
-import helpContent from "./index.help.md";
 import { Script } from "./script";
 
 const Editor = React.lazy(
@@ -56,30 +55,33 @@ const skeletonBody = `\
 // The ./types module provides helper types for your Input events and messages.
 import { Input, Message } from "./types";
 
-// Your node can output well-known message types, any of your custom message types, or
+// Your script can output well-known message types, any of your custom message types, or
 // complete custom message types.
 //
-// Use \`Message\` to access your data source types or well-known types:
+// Use \`Message\` to access types from the schemas defined in your data source:
 // type Twist = Message<"geometry_msgs/Twist">;
 //
-// Conventionally, it's common to make a _type alias_ for your node's output type
-// and use that type name as the return type for your node function.
+// Import from the @foxglove/schemas package to use foxglove schema types:
+// import { Pose, LocationFix } from "@foxglove/schemas";
+//
+// Conventionally, it's common to make a _type alias_ for your script's output type
+// and use that type name as the return type for your script function.
 // Here we've called the type \`Output\` but you can pick any type name.
 type Output = {
   hello: string;
 };
 
-// These are the topics your node "subscribes" to. Studio will invoke your node function
+// These are the topics your script "subscribes" to. Studio will invoke your script function
 // when any message is received on one of these topics.
 export const inputs = ["/input/topic"];
 
-// Any output your node produces is "published" to this topic. Published messages are only visible within Studio, not to your original data source.
-export const output = "/studio_node/output_topic";
+// Any output your script produces is "published" to this topic. Published messages are only visible within Studio, not to your original data source.
+export const output = "/studio_script/output_topic";
 
 // This function is called with messages from your input topics.
 // The first argument is an event with the topic, receive time, and message.
 // Use the \`Input<...>\` helper to get the correct event type for your input topic messages.
-export default function node(event: Input<"/input/topic">): Output {
+export default function script(event: Input<"/input/topic">): Output {
   return {
     hello: "world!",
   };
@@ -87,40 +89,35 @@ export default function node(event: Input<"/input/topic">): Output {
 
 type Props = {
   config: Config;
-  saveConfig: (config: Partial<Config>) => void;
+  saveConfig: SaveConfig<Config>;
 };
 
-const UnsavedDot = styled.div`
-  display: ${({ isSaved }: { isSaved: boolean }) => (isSaved ? "none" : "initial")};
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  position: absolute;
-  right: 8px;
-  top: 50%;
-  transform: translateY(-50%);
-  background-color: ${colors.DARK9};
-`;
-
-const SWelcomeScreen = styled.div`
-  display: flex;
-  text-align: center;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  padding: 25%;
-  height: 100%;
-  > * {
-    margin: 4px 0;
-  }
-`;
+const useStyles = makeStyles()((theme) => ({
+  emptyState: {
+    backgroundColor: theme.palette.background.default,
+  },
+  unsavedDot: {
+    width: 6,
+    height: 6,
+    borderRadius: "50%",
+    top: "50%",
+    position: "absolute",
+    right: theme.spacing(1),
+    transform: "translateY(-50%)",
+    backgroundColor: theme.palette.text.secondary,
+  },
+  input: {
+    [`.${inputClasses.input}`]: {
+      padding: theme.spacing(1),
+    },
+  },
+}));
 
 export type Explorer = undefined | "nodes" | "utils" | "templates";
 
-function buildSettingsTree(config: Config): SettingsTreeRoots {
+function buildSettingsTree(config: Config): SettingsTreeNodes {
   return {
     general: {
-      icon: "Settings",
       fields: {
         autoFormatOnSave: {
           input: "boolean",
@@ -132,36 +129,39 @@ function buildSettingsTree(config: Config): SettingsTreeRoots {
   };
 }
 
-const selectSetHelpInfo = (store: HelpInfoStore) => store.setHelpInfo;
-
 const WelcomeScreen = ({ addNewNode }: { addNewNode: (code?: string) => void }) => {
-  const setHelpInfo = useHelpInfo(selectSetHelpInfo);
-  const { openHelp } = useWorkspace();
+  const { classes } = useStyles();
   return (
-    <SWelcomeScreen>
-      <Playground />
-      <TextContent>
-        Welcome to Node Playground! Get started by reading the{" "}
-        <Link
-          color="primary"
-          underline="hover"
-          onClick={(e) => {
-            e.preventDefault();
-            setHelpInfo({ title: "NodePlayground", content: helpContent });
-            openHelp();
-          }}
-        >
-          docs
-        </Link>
-        , or just create a new node.
-      </TextContent>
-      <Button style={{ marginTop: "8px" }} onClick={() => addNewNode()}>
-        <Icon size="medium">
-          <PlusIcon />
-        </Icon>{" "}
-        New node
-      </Button>
-    </SWelcomeScreen>
+    <EmptyState className={classes.emptyState}>
+      <Container maxWidth="xs">
+        <Stack justifyContent="center" alignItems="center" gap={1} fullHeight>
+          <Typography variant="inherit" gutterBottom>
+            Welcome to User Scripts!
+            <br />
+            Get started by reading the{" "}
+            <Link
+              color="primary"
+              underline="hover"
+              href="https://foxglove.dev/docs/studio/panels/user-scripts"
+              target="_blank"
+            >
+              docs
+            </Link>
+            , or just create a new script.
+          </Typography>
+          <Button
+            color="inherit"
+            variant="contained"
+            onClick={() => {
+              addNewNode();
+            }}
+            startIcon={<AddIcon />}
+          >
+            New script
+          </Button>
+        </Stack>
+      </Container>
+    </EmptyState>
   );
 };
 
@@ -172,11 +172,10 @@ const userNodeSelector = (state: LayoutState) =>
 
 function NodePlayground(props: Props) {
   const { config, saveConfig } = props;
+  const { classes, theme } = useStyles();
   const { autoFormatOnSave = false, selectedNodeId, editorForStorybook } = config;
-  const { id: panelId } = usePanelContext();
   const updatePanelSettingsTree = usePanelSettingsTreeUpdate();
 
-  const theme = useTheme();
   const [explorer, updateExplorer] = React.useState<Explorer>(undefined);
 
   const userNodes = useCurrentLayoutSelector(userNodeSelector);
@@ -209,11 +208,13 @@ function NodePlayground(props: Props) {
   const [inputTitle, setInputTitle] = useState<string>(() => {
     return currentScript
       ? currentScript.filePath + (currentScript.readOnly ? " (READONLY)" : "")
-      : "node name";
+      : "script name";
   });
 
+  const prefersDarkMode = theme.palette.mode === "dark";
+
   const inputStyle = {
-    backgroundColor: theme.semanticColors.bodyBackground,
+    backgroundColor: theme.palette.background[prefersDarkMode ? "default" : "paper"],
     width: `${Math.max(inputTitle.length + 4, 10)}ch`, // Width based on character count of title + padding
   };
 
@@ -232,11 +233,11 @@ function NodePlayground(props: Props) {
   );
 
   useEffect(() => {
-    updatePanelSettingsTree(panelId, {
+    updatePanelSettingsTree({
       actionHandler,
-      roots: buildSettingsTree(config),
+      nodes: buildSettingsTree(config),
     });
-  }, [actionHandler, config, panelId, updatePanelSettingsTree]);
+  }, [actionHandler, config, updatePanelSettingsTree]);
 
   React.useLayoutEffect(() => {
     if (selectedNode) {
@@ -252,12 +253,26 @@ function NodePlayground(props: Props) {
     setInputTitle(() => {
       return currentScript
         ? currentScript.filePath + (currentScript.readOnly ? " (READONLY)" : "")
-        : "node name";
+        : "script name";
     });
   }, [currentScript]);
 
+  const saveCurrentNode = useCallback(() => {
+    if (
+      selectedNodeId != undefined &&
+      selectedNode &&
+      currentScript &&
+      isCurrentScriptSelectedNode
+    ) {
+      setUserNodes({
+        [selectedNodeId]: { ...selectedNode, sourceCode: currentScript.code },
+      });
+    }
+  }, [currentScript, isCurrentScriptSelectedNode, selectedNode, selectedNodeId, setUserNodes]);
+
   const addNewNode = React.useCallback(
     (code?: string) => {
+      saveCurrentNode();
       const newNodeId = uuidv4();
       const sourceCode = code ?? skeletonBody;
       setUserNodes({
@@ -268,7 +283,7 @@ function NodePlayground(props: Props) {
       });
       saveConfig({ selectedNodeId: newNodeId });
     },
-    [saveConfig, setUserNodes],
+    [saveConfig, saveCurrentNode, setUserNodes],
   );
 
   const saveNode = React.useCallback(
@@ -310,26 +325,35 @@ function NodePlayground(props: Props) {
     [scriptBackStack],
   );
 
+  const saveOnLeave = useCallback(() => {
+    if (isNodeSaved) {
+      return;
+    }
+    // automatically save script on panel leave
+    saveCurrentNode();
+  }, [isNodeSaved, saveCurrentNode]);
+
+  // The cleanup function below should only run when this component unmounts.
+  // We're using a ref here so that the cleanup useEffect doesn't run whenever one of the callback
+  // dependencies changes, only when the component unmounts and with the most up-to-date callback.
+  const saveOnLeaveRef = useRef(saveOnLeave);
+  saveOnLeaveRef.current = saveOnLeave;
+  useEffect(() => {
+    return () => {
+      saveOnLeaveRef.current();
+    };
+  }, []);
+
   return (
-    <Stack height="100%">
-      <PanelToolbar helpContent={helpContent} />
+    <Stack fullHeight>
+      <PanelToolbar />
       <Divider />
-      <Stack direction="row" height="100%">
+      <Stack direction="row" fullHeight overflow="hidden">
         <Sidebar
           explorer={explorer}
           updateExplorer={updateExplorer}
           selectNode={(nodeId) => {
-            if (
-              selectedNodeId != undefined &&
-              selectedNode &&
-              currentScript &&
-              isCurrentScriptSelectedNode
-            ) {
-              // Save current state so that user can seamlessly go back to previous work.
-              setUserNodes({
-                [selectedNodeId]: { ...selectedNode, sourceCode: currentScript.code },
-              });
-            }
+            saveCurrentNode();
             saveConfig({ selectedNodeId: nodeId });
           }}
           deleteNode={(nodeId) => {
@@ -342,25 +366,27 @@ function NodePlayground(props: Props) {
           setScriptOverride={setScriptOverride}
           addNewNode={addNewNode}
         />
-        <Stack flexGrow={1} height="100%" overflow="hidden">
-          <Stack direction="row" alignItems="center" bgcolor={theme.palette.neutralLighterAlt}>
+        <Stack
+          flexGrow={1}
+          fullHeight
+          overflow="hidden"
+          style={{
+            backgroundColor: theme.palette.background[prefersDarkMode ? "paper" : "default"],
+          }}
+        >
+          <Stack direction="row" alignItems="center">
             {scriptBackStack.length > 1 && (
-              <Icon
-                size="large"
-                tooltip="Go back"
-                dataTest="go-back"
-                style={{ color: colors.DARK9 }}
-                onClick={goBack}
-              >
-                <ArrowLeftIcon />
-              </Icon>
+              <IconButton title="Go back" data-testid="go-back" size="small" onClick={goBack}>
+                <ArrowBackIcon />
+              </IconButton>
             )}
             {selectedNodeId != undefined && selectedNode && (
               <div style={{ position: "relative" }}>
                 <Input
+                  className={classes.input}
                   size="small"
                   disableUnderline
-                  placeholder="node name"
+                  placeholder="script name"
                   value={inputTitle}
                   disabled={!currentScript || currentScript.readOnly}
                   onChange={(ev) => {
@@ -373,28 +399,29 @@ function NodePlayground(props: Props) {
                   }}
                   inputProps={{ spellCheck: false, style: inputStyle }}
                 />
-                <UnsavedDot isSaved={isNodeSaved} />
+                {!isNodeSaved && <div className={classes.unsavedDot} />}
               </div>
             )}
-            <Icon
-              size="large"
-              tooltip="new node"
-              dataTest="new-node"
-              style={{ color: colors.DARK9, padding: "0 5px" }}
-              onClick={() => addNewNode()}
+            <IconButton
+              title="New node"
+              data-testid="new-node"
+              size="small"
+              onClick={() => {
+                addNewNode();
+              }}
             >
-              <PlusIcon />
-            </Icon>
+              <AddIcon />
+            </IconButton>
           </Stack>
 
           <Stack flexGrow={1} overflow="hidden ">
             {selectedNodeId == undefined && <WelcomeScreen addNewNode={addNewNode} />}
-            <div
+            <Stack
+              flexGrow={1}
+              fullWidth
+              overflow="hidden"
               style={{
-                flexGrow: 1,
-                width: "100%",
-                overflow: "hidden",
-                display: selectedNodeId != undefined ? "initial" : "none",
+                display: selectedNodeId != undefined ? "flex" : "none",
                 /* Ensures the monaco-editor starts loading before the user opens it */
               }}
             >
@@ -405,10 +432,14 @@ function NodePlayground(props: Props) {
                     flex="auto"
                     alignItems="center"
                     justifyContent="center"
-                    width="100%"
-                    height="100%"
+                    fullHeight
+                    fullWidth
+                    style={{
+                      backgroundColor:
+                        theme.palette.background[prefersDarkMode ? "default" : "paper"],
+                    }}
                   >
-                    <Spinner size={SpinnerSize.large} />
+                    <CircularProgress size={28} />
                   </Stack>
                 }
               >
@@ -424,12 +455,14 @@ function NodePlayground(props: Props) {
                   />
                 )}
               </Suspense>
-            </div>
+            </Stack>
             <Stack>
               <BottomBar
                 nodeId={selectedNodeId}
                 isSaved={isNodeSaved}
-                save={() => saveNode(currentScript?.code)}
+                save={() => {
+                  saveNode(currentScript?.code);
+                }}
                 diagnostics={selectedNodeDiagnostics}
                 logs={selectedNodeLogs}
               />

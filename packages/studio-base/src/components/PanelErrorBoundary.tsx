@@ -2,10 +2,11 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
-import { Box, Button, Link, Stack } from "@mui/material";
-import { captureException } from "@sentry/core";
+import { Button, Link } from "@mui/material";
 import { Component, ErrorInfo, PropsWithChildren, ReactNode } from "react";
 
+import Stack from "@foxglove/studio-base/components/Stack";
+import { reportError } from "@foxglove/studio-base/reportError";
 import { AppError } from "@foxglove/studio-base/util/errors";
 
 import ErrorDisplay from "./ErrorDisplay";
@@ -22,16 +23,16 @@ type State = {
 };
 
 export default class PanelErrorBoundary extends Component<PropsWithChildren<Props>, State> {
-  override state: State = {
+  public override state: State = {
     currentError: undefined,
   };
 
-  override componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
-    captureException(new AppError(error, errorInfo));
+  public override componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
+    reportError(new AppError(error, errorInfo));
     this.setState({ currentError: { error, errorInfo } });
   }
 
-  override render(): ReactNode {
+  public override render(): ReactNode {
     if (this.state.currentError) {
       return (
         <ErrorDisplay
@@ -43,7 +44,12 @@ export default class PanelErrorBoundary extends Component<PropsWithChildren<Prop
           content={
             <p>
               Something went wrong in this panel.{" "}
-              <Link color="inherit" onClick={() => this.setState({ currentError: undefined })}>
+              <Link
+                color="inherit"
+                onClick={() => {
+                  this.setState({ currentError: undefined });
+                }}
+              >
                 Dismiss this error
               </Link>{" "}
               to continue using this panel. If the issue persists, try resetting the panel.
@@ -51,15 +57,15 @@ export default class PanelErrorBoundary extends Component<PropsWithChildren<Prop
           }
           actions={
             <>
-              <Stack direction="row" spacing={1}>
-                <Box flexGrow={1} />
+              <Stack direction="row-reverse" gap={1}>
                 <Button
-                  variant="text"
-                  title="Remove this panel from the layout"
-                  color="error"
-                  onClick={this.props.onRemovePanel}
+                  variant="outlined"
+                  color="secondary"
+                  onClick={() => {
+                    this.setState({ currentError: undefined });
+                  }}
                 >
-                  Remove Panel
+                  Dismiss
                 </Button>
                 <Button
                   variant="outlined"
@@ -73,11 +79,12 @@ export default class PanelErrorBoundary extends Component<PropsWithChildren<Prop
                   Reset Panel
                 </Button>
                 <Button
-                  variant="outlined"
-                  color="secondary"
-                  onClick={() => this.setState({ currentError: undefined })}
+                  variant="text"
+                  title="Remove this panel from the layout"
+                  color="error"
+                  onClick={this.props.onRemovePanel}
                 >
-                  Dismiss
+                  Remove Panel
                 </Button>
               </Stack>
             </>

@@ -11,11 +11,9 @@
 //   found at http://www.apache.org/licenses/LICENSE-2.0
 //   You may not use this file except in compliance with the License.
 
-import { DefaultButton, Dialog, DialogFooter } from "@fluentui/react";
-import { useCallback, useEffect, useContext, useRef } from "react";
-
-import { useDialogHostId } from "@foxglove/studio-base/context/DialogHostIdContext";
-import ModalContext from "@foxglove/studio-base/context/ModalContext";
+import { Dialog, DialogContent, DialogTitle, DialogActions, Button } from "@mui/material";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useKeyPressEvent } from "react-use";
 
 type ConfirmVariant = "danger" | "primary";
 type ConfirmAction = "ok" | "cancel";
@@ -52,60 +50,54 @@ function ConfirmModal(props: ConfirmModalProps) {
     [originalOnComplete],
   );
 
+  useKeyPressEvent("Enter", () => {
+    onComplete("ok");
+  });
+
   // Ensure we still call onComplete(undefined) when the component unmounts, if it hasn't been
   // called already
   useEffect(() => {
-    return () => onComplete("cancel");
+    return () => {
+      onComplete("cancel");
+    };
   }, [onComplete]);
-
-  const hostId = useDialogHostId();
-
-  const confirmStyle = props.variant ?? "primary";
 
   const buttons = [
     props.cancel !== false && (
-      <DefaultButton
+      <Button
+        size="large"
+        variant="outlined"
+        color="inherit"
         key="cancel"
-        onClick={() => onComplete("cancel")}
-        text={props.cancel ?? "Cancel"}
-      />
+        onClick={() => {
+          onComplete("cancel");
+        }}
+      >
+        {props.cancel ?? "Cancel"}
+      </Button>
     ),
-    <DefaultButton
+    <Button
       key="confirm"
-      primary={confirmStyle === "primary"}
-      styles={
-        confirmStyle === "danger"
-          ? {
-              root: { backgroundColor: "#c72121", borderColor: "#c72121", color: "white" },
-              rootHovered: {
-                backgroundColor: "#b31b1b",
-                borderColor: "#b31b1b",
-                color: "white",
-              },
-              rootPressed: {
-                backgroundColor: "#771010",
-                borderColor: "#771010",
-                color: "white",
-              },
-            }
-          : undefined
-      }
+      variant="contained"
+      size="large"
+      color={props.variant === "danger" ? "error" : "primary"}
       type="submit"
-      text={props.ok ?? "OK"}
-    />,
+    >
+      {props.ok ?? "OK"}
+    </Button>,
   ];
-  if (confirmStyle === "danger") {
+  if (props.variant === "danger") {
     buttons.reverse();
   }
 
   return (
     <Dialog
-      hidden={false}
-      onDismiss={() => onComplete("cancel")}
-      dialogContentProps={{ title: props.title }}
-      modalProps={{ layerProps: { hostId } }}
-      minWidth={320}
-      maxWidth={480}
+      open
+      onClose={() => {
+        onComplete("cancel");
+      }}
+      maxWidth="xs"
+      fullWidth
     >
       <form
         onSubmit={(event) => {
@@ -113,8 +105,9 @@ function ConfirmModal(props: ConfirmModalProps) {
           onComplete("ok");
         }}
       >
-        {props.prompt}
-        <DialogFooter styles={{ actions: { whiteSpace: "nowrap" } }}>{buttons}</DialogFooter>
+        <DialogTitle>{props.title}</DialogTitle>
+        <DialogContent>{props.prompt}</DialogContent>
+        <DialogActions>{buttons}</DialogActions>
       </form>
     </Dialog>
   );
@@ -122,25 +115,25 @@ function ConfirmModal(props: ConfirmModalProps) {
 
 // Returns a function that can be used similarly to the DOM confirm(), but
 // backed by a React element rather than a native modal, and asynchronous.
-export function useConfirm(): (options: ConfirmOptions) => Promise<ConfirmAction> {
-  const modalHost = useContext(ModalContext);
+export function useConfirm(): [
+  confirm: (options: ConfirmOptions) => Promise<ConfirmAction>,
+  confirmModal: JSX.Element | undefined,
+] {
+  const [modal, setModal] = useState<JSX.Element | undefined>();
 
-  const openConfirm = useCallback(
-    async (options: ConfirmOptions) => {
-      return await new Promise<ConfirmAction>((resolve) => {
-        const remove = modalHost.addModalElement(
-          <ConfirmModal
-            {...options}
-            onComplete={(value) => {
-              resolve(value);
-              remove();
-            }}
-          />,
-        );
-      });
-    },
-    [modalHost],
-  );
+  const openConfirm = useCallback(async (options: ConfirmOptions) => {
+    return await new Promise<ConfirmAction>((resolve) => {
+      setModal(
+        <ConfirmModal
+          {...options}
+          onComplete={(value) => {
+            resolve(value);
+            setModal(undefined);
+          }}
+        />,
+      );
+    });
+  }, []);
 
-  return openConfirm;
+  return [openConfirm, modal];
 }

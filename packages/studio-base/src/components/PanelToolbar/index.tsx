@@ -11,16 +11,15 @@
 //   found at http://www.apache.org/licenses/LICENSE-2.0
 //   You may not use this file except in compliance with the License.
 
-import FullscreenIcon from "@mui/icons-material/Fullscreen";
 import FullscreenExitIcon from "@mui/icons-material/FullscreenExit";
-import HelpOutlineIcon from "@mui/icons-material/HelpOutline";
-import { styled as muiStyled, Typography } from "@mui/material";
-import { useContext, useState, useMemo, CSSProperties } from "react";
+import { Typography } from "@mui/material";
+import { useContext, useMemo, CSSProperties } from "react";
+import { makeStyles } from "tss-react/mui";
 
 import PanelContext from "@foxglove/studio-base/components/PanelContext";
 import ToolbarIconButton from "@foxglove/studio-base/components/PanelToolbar/ToolbarIconButton";
-import { useWorkspace } from "@foxglove/studio-base/context/WorkspaceContext";
-import { HelpInfoStore, useHelpInfo } from "@foxglove/studio-base/providers/HelpInfoProvider";
+import { useDefaultPanelTitle } from "@foxglove/studio-base/providers/PanelStateContextProvider";
+import { PANEL_TITLE_CONFIG_KEY } from "@foxglove/studio-base/util/layout";
 
 import { PanelToolbarControls } from "./PanelToolbarControls";
 
@@ -30,27 +29,26 @@ type Props = {
   additionalIcons?: React.ReactNode;
   backgroundColor?: CSSProperties["backgroundColor"];
   children?: React.ReactNode;
-  helpContent?: React.ReactNode;
+  className?: string;
   isUnknownPanel?: boolean;
 };
 
-const PanelToolbarRoot = muiStyled("div", {
-  shouldForwardProp: (prop) => prop !== "backgroundColor",
-})<{ backgroundColor?: CSSProperties["backgroundColor"] }>(({ theme, backgroundColor }) => ({
-  transition: "transform 80ms ease-in-out, opacity 80ms ease-in-out",
-  flex: "0 0 auto",
-  alignItems: "center",
-  justifyContent: "flex-end",
-  padding: theme.spacing(0.25, 0.75),
-  display: "flex",
-  minHeight: PANEL_TOOLBAR_MIN_HEIGHT,
-  backgroundColor: backgroundColor ?? theme.palette.background.paper,
-  width: "100%",
-  left: 0,
-  zIndex: theme.zIndex.appBar,
+const useStyles = makeStyles()((theme) => ({
+  root: {
+    transition: "transform 80ms ease-in-out, opacity 80ms ease-in-out",
+    cursor: "auto",
+    flex: "0 0 auto",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    padding: theme.spacing(0.25, 0.75),
+    display: "flex",
+    minHeight: PANEL_TOOLBAR_MIN_HEIGHT,
+    backgroundColor: theme.palette.background.paper,
+    width: "100%",
+    left: 0,
+    zIndex: theme.zIndex.appBar,
+  },
 }));
-
-const selectSetHelpInfo = (store: HelpInfoStore) => store.setHelpInfo;
 
 // Panel toolbar should be added to any panel that's part of the
 // react-mosaic layout.  It adds a drag handle, remove/replace controls
@@ -59,16 +57,17 @@ export default React.memo<Props>(function PanelToolbar({
   additionalIcons,
   backgroundColor,
   children,
-  helpContent,
+  className,
   isUnknownPanel = false,
 }: Props) {
-  const { isFullscreen, enterFullscreen, exitFullscreen } = useContext(PanelContext) ?? {};
-  const [menuOpen, setMenuOpen] = useState(false);
+  const { classes, cx } = useStyles();
+  const {
+    isFullscreen,
+    exitFullscreen,
+    config: { [PANEL_TITLE_CONFIG_KEY]: customTitle = undefined } = {},
+  } = useContext(PanelContext) ?? {};
 
   const panelContext = useContext(PanelContext);
-  const { openHelp } = useWorkspace();
-
-  const setHelpInfo = useHelpInfo(selectSetHelpInfo);
 
   // Help-shown state must be hoisted outside the controls container so the modal can remain visible
   // when the panel is no longer hovered.
@@ -76,30 +75,6 @@ export default React.memo<Props>(function PanelToolbar({
     return (
       <>
         {additionalIcons}
-        {Boolean(helpContent) && (
-          <ToolbarIconButton
-            value="help"
-            title="Help"
-            onClick={() => {
-              if (panelContext?.title != undefined) {
-                setHelpInfo({ title: panelContext.title, content: helpContent });
-                openHelp();
-              }
-            }}
-          >
-            <HelpOutlineIcon />
-          </ToolbarIconButton>
-        )}
-        {isFullscreen === false && (
-          <ToolbarIconButton
-            title="Fullscreen"
-            data-test="panel-toolbar-fullscreen"
-            onClick={enterFullscreen}
-            value="fullscreen"
-          >
-            <FullscreenIcon />
-          </ToolbarIconButton>
-        )}
         {isFullscreen === true && (
           <ToolbarIconButton
             value="exit-fullscreen"
@@ -111,31 +86,41 @@ export default React.memo<Props>(function PanelToolbar({
         )}
       </>
     );
-  }, [
-    additionalIcons,
-    openHelp,
-    setHelpInfo,
-    panelContext?.title,
-    helpContent,
-    isFullscreen,
-    enterFullscreen,
-    exitFullscreen,
-  ]);
+  }, [additionalIcons, isFullscreen, exitFullscreen]);
 
+  // If we have children then we limit the drag area to the controls. Otherwise the entire
+  // toolbar is draggable.
+  const rootDragRef =
+    isUnknownPanel || children != undefined ? undefined : panelContext?.connectToolbarDragHandle;
+
+  const controlsDragRef =
+    isUnknownPanel || children == undefined ? undefined : panelContext?.connectToolbarDragHandle;
+
+  const [defaultPanelTitle] = useDefaultPanelTitle();
+  const customPanelTitle =
+    customTitle != undefined && typeof customTitle === "string" && customTitle.length > 0
+      ? customTitle
+      : defaultPanelTitle;
+
+  const title = customPanelTitle ?? panelContext?.title;
   return (
-    <PanelToolbarRoot backgroundColor={backgroundColor}>
+    <header
+      className={cx(classes.root, className)}
+      data-testid="mosaic-drag-handle"
+      ref={rootDragRef}
+      style={{ backgroundColor, cursor: rootDragRef != undefined ? "grab" : "auto" }}
+    >
       {children ??
-        (panelContext != undefined && (
+        (title && (
           <Typography noWrap variant="body2" color="text.secondary" flex="auto">
-            {panelContext.title}
+            {title}
           </Typography>
         ))}
       <PanelToolbarControls
         additionalIcons={additionalIconsWithHelp}
         isUnknownPanel={!!isUnknownPanel}
-        menuOpen={menuOpen}
-        setMenuOpen={setMenuOpen}
+        ref={controlsDragRef}
       />
-    </PanelToolbarRoot>
+    </header>
   );
 });

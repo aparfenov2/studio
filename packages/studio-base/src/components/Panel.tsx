@@ -11,57 +11,58 @@
 //   found at http://www.apache.org/licenses/LICENSE-2.0
 //   You may not use this file except in compliance with the License.
 
-import { makeStyles } from "@fluentui/react";
-import BorderAllIcon from "@mdi/svg/svg/border-all.svg";
-import ExpandAllOutlineIcon from "@mdi/svg/svg/expand-all-outline.svg";
-import GridLargeIcon from "@mdi/svg/svg/grid-large.svg";
-import TrashCanOutlineIcon from "@mdi/svg/svg/trash-can-outline.svg";
-import { styled as muiStyled } from "@mui/material";
+import {
+  Delete20Regular,
+  TabDesktop20Regular,
+  TabDesktopMultiple20Regular,
+  TableSimple20Regular,
+} from "@fluentui/react-icons";
 import { last } from "lodash";
 import React, {
-  useState,
+  ComponentType,
+  MouseEventHandler,
+  Profiler,
   useCallback,
   useContext,
+  useLayoutEffect,
   useMemo,
   useRef,
-  ComponentType,
-  Profiler,
-  MouseEventHandler,
-  useLayoutEffect,
-  useEffect,
+  useState,
 } from "react";
 import {
-  MosaicContext,
-  MosaicWindowActions,
-  MosaicWindowContext,
   getNodeAtPath,
   getOtherBranch,
-  updateTree,
+  MosaicContext,
   MosaicNode,
+  MosaicWindowActions,
+  MosaicWindowContext,
+  updateTree,
 } from "react-mosaic-component";
 import { Transition } from "react-transition-group";
 import { useMountedState } from "react-use";
+import { makeStyles } from "tss-react/mui";
 
 import { useShallowMemo } from "@foxglove/hooks";
 import { useConfigById } from "@foxglove/studio-base/PanelAPI";
-import Button from "@foxglove/studio-base/components/Button";
-import Icon from "@foxglove/studio-base/components/Icon";
 import KeyListener from "@foxglove/studio-base/components/KeyListener";
+import { MosaicPathContext } from "@foxglove/studio-base/components/MosaicPathContext";
 import PanelContext from "@foxglove/studio-base/components/PanelContext";
 import PanelErrorBoundary from "@foxglove/studio-base/components/PanelErrorBoundary";
-import {
-  FULLSCREEN_TRANSITION_DURATION_MS,
-  PanelRoot,
-} from "@foxglove/studio-base/components/PanelRoot";
+import { PanelOverlay, PanelOverlayProps } from "@foxglove/studio-base/components/PanelOverlay";
+import { PanelRoot } from "@foxglove/studio-base/components/PanelRoot";
 import {
   useCurrentLayoutActions,
   useSelectedPanels,
 } from "@foxglove/studio-base/context/CurrentLayoutContext";
 import { usePanelCatalog } from "@foxglove/studio-base/context/PanelCatalogContext";
-import { useWorkspace } from "@foxglove/studio-base/context/WorkspaceContext";
+import {
+  useWorkspaceStore,
+  WorkspaceStoreSelectors,
+} from "@foxglove/studio-base/context/Workspace/WorkspaceContext";
 import usePanelDrag from "@foxglove/studio-base/hooks/usePanelDrag";
+import { useMessagePathDrop } from "@foxglove/studio-base/services/messagePathDragging";
 import { TabPanelConfig } from "@foxglove/studio-base/types/layouts";
-import { PanelConfig, SaveConfig, OpenSiblingPanel } from "@foxglove/studio-base/types/panels";
+import { OpenSiblingPanel, PanelConfig, SaveConfig } from "@foxglove/studio-base/types/panels";
 import { TAB_PANEL_TYPE } from "@foxglove/studio-base/util/globalConstants";
 import {
   getPanelIdForType,
@@ -69,114 +70,33 @@ import {
   getPathFromNode,
   updateTabPanelLayout,
 } from "@foxglove/studio-base/util/layout";
-import { colors } from "@foxglove/studio-base/util/sharedStyleConstants";
 
-const ActionsOverlay = muiStyled("div")`
-  cursor: pointer;
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 100000; // highest level within panel
-  display: none;
-  flex-direction: column;
-  justify-content: flex-start;
-  align-items: flex-end;
-  font-size: 14px;
-  padding-top: 24px;
-
-  ${PanelRoot.toString()}:hover > & {
-    background-color: ${({ theme }) => theme.palette.background.default};
-    display: flex;
-    align-items: center;
-    align-content: center;
-    justify-content: center;
-    flex-wrap: wrap;
-  }
-  // for screenshot tests
-  .hoverForScreenshot {
-    background-color: ${({ theme }) => theme.palette.background.default};
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-wrap: wrap;
-  }
-
-  div {
-    width: 100%;
-    padding: 6px 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-wrap: wrap;
-  }
-
-  svg {
-    margin-right: 4px;
-    width: 24px;
-    height: 24px;
-    fill: white;
-  }
-  p {
-    font-size: 12px;
-    color: ${colors.TEXT_MUTED};
-  }
-`;
-
-const useStyles = makeStyles((theme) => ({
+const useStyles = makeStyles()((theme) => ({
   perfInfo: {
     position: "absolute",
-    whiteSpace: "pre-line",
     bottom: 2,
-    left: 2,
-    fontSize: "9px",
+    left: 3,
+    whiteSpace: "pre-line",
+    fontSize: "0.75em",
+    fontFeatureSettings: `${theme.typography.fontFeatureSettings}, 'zero'`,
     opacity: 0.7,
     userSelect: "none",
     mixBlendMode: "difference",
   },
-  quickActionsOverlayButton: {
-    width: 72,
-    height: 72,
-    margin: 4,
-    flex: "none",
-    fontSize: "14px",
-    display: "flex",
-    flexDirection: "column",
+  tabCount: {
     alignItems: "center",
     justifyContent: "center",
-    background: `${theme.semanticColors.primaryButtonBackground} !important`,
-    color: `${theme.semanticColors.primaryButtonText} !important`,
-
-    svg: {
-      margin: "0 0 6px",
-      fill: theme.semanticColors.primaryButtonText,
-    },
-
-    ":not(.disabled):hover": {
-      background: `${theme.semanticColors.primaryButtonBackgroundHovered} !important`,
-    },
-  },
-  tabActionsOverlayButton: {
-    margin: "4px !important",
-    flex: "none",
-    fontSize: "14px",
-    alignItems: "center",
-    background: `${colors.BLUE} !important`,
-    color: `${theme.semanticColors.primaryButtonText} !important`,
-    width: 145,
-    height: 40,
+    position: "absolute",
     display: "flex",
-    flexDirection: "row",
-    justifyContent: "space-between",
-
-    svg: {
-      margin: "0 0 6px",
-      fill: theme.semanticColors.primaryButtonText,
-    },
-    ":not(.disabled):hover": {
-      background: `${colors.BLUE1} !important`,
-    },
+    inset: 0,
+    textAlign: "center",
+    letterSpacing: "-0.125em",
+    // Totally random numbers here to get the text to fit inside the icon
+    paddingTop: 1,
+    paddingLeft: 5,
+    paddingRight: 11,
+    fontSize: `${theme.typography.subtitle2.fontSize} !important`,
+    fontWeight: 600,
   },
 }));
 
@@ -193,9 +113,12 @@ export interface PanelStatics<Config> {
 
 // Like React.ComponentType<P>, but without restrictions on the constructor return type.
 type ComponentConstructorType<P> = { displayName?: string } & (
-  | { new (props: P): React.Component<unknown, unknown> }
-  | { (props: P): React.ReactElement<unknown> | ReactNull }
+  | (new (props: P) => React.Component<unknown, unknown>)
+  | ((props: P) => React.ReactElement<unknown> | ReactNull)
 );
+
+/** Used in storybook when panels are renered outside of a <PanelLayout/> */
+const FALLBACK_PANEL_ID = "$unknown_id";
 
 // HOC that wraps panel in an error boundary and flex box.
 // Gives panel a `config` and `saveConfig`.
@@ -210,9 +133,8 @@ export default function Panel<
   PanelComponent: ComponentConstructorType<PanelProps> & PanelStatics<Config>,
 ): ComponentType<Props<Config> & Omit<PanelProps, "config" | "saveConfig">> & PanelStatics<Config> {
   function ConnectedPanel(props: Props<Config>) {
-    const { childId, overrideConfig, tabId, ...otherProps } = props;
-
-    const classes = useStyles();
+    const { childId = FALLBACK_PANEL_ID, overrideConfig, tabId, ...otherProps } = props;
+    const { classes, cx, theme } = useStyles();
     const isMounted = useMountedState();
 
     const { mosaicActions } = useContext(MosaicContext);
@@ -228,7 +150,7 @@ export default function Panel<
     } = useSelectedPanels();
 
     const isSelected = useMemo(
-      () => childId != undefined && selectedPanelIds.includes(childId),
+      () => selectedPanelIds.includes(childId),
       [childId, selectedPanelIds],
     );
     const numSelectedPanelsIfSelected = useMemo(
@@ -241,12 +163,11 @@ export default function Panel<
       updatePanelConfigs,
       createTabPanel,
       closePanel,
+      swapPanel,
       getCurrentLayoutState,
     } = useCurrentLayoutActions();
 
     const [quickActionsKeyPressed, setQuickActionsKeyPressed] = useState(false);
-    const [shiftKeyPressed, setShiftKeyPressed] = useState(false);
-    const [cmdKeyPressed, setCmdKeyPressed] = useState(false);
     const [fullscreen, setFullscreen] = useState(false);
     const [fullscreenSourceRect, setFullscreenSourceRect] = useState<DOMRect | undefined>(
       undefined,
@@ -254,7 +175,10 @@ export default function Panel<
     const [hasFullscreenDescendant, _setHasFullscreenDescendant] = useState(false);
     const panelRootRef = useRef<HTMLDivElement>(ReactNull);
     const panelCatalog = usePanelCatalog();
-    const isTopLevelPanel = mosaicWindowActions.getPath().length === 0 && tabId == undefined;
+
+    const mosaicPath = useContext(MosaicPathContext);
+    const isTopLevelPanel =
+      mosaicPath != undefined && mosaicPath.length === 0 && tabId == undefined;
 
     // There may be a parent panel (when a panel is in a tab).
     const parentPanelContext = useContext(PanelContext);
@@ -379,31 +303,34 @@ export default function Panel<
       ],
     );
 
-    const { panelSettingsOpen } = useWorkspace();
+    const replacePanel = useCallback(
+      (newPanelType: string, config: Record<string, unknown>) => {
+        swapPanel({
+          tabId,
+          originalId: childId,
+          type: newPanelType,
+          root: mosaicActions.getRoot() as MosaicNode<string>,
+          path: mosaicWindowActions.getPath(),
+          config,
+        });
+      },
+      [childId, mosaicActions, mosaicWindowActions, swapPanel, tabId],
+    );
+
+    const panelSettingsOpen = useWorkspaceStore(WorkspaceStoreSelectors.selectPanelSettingsOpen);
 
     const onPanelRootClick: MouseEventHandler<HTMLDivElement> = useCallback(
       (e) => {
-        if (childId == undefined) {
-          return;
-        }
         if (panelSettingsOpen) {
           // Allow clicking with no modifiers to select a panel (and deselect others) when panel settings are open
           e.stopPropagation(); // select the deepest clicked panel, not parent tab panels
           setSelectedPanelIds([childId]);
-        } else if (e.metaKey || shiftKeyPressed || isSelected) {
+        } else if (e.metaKey || e.shiftKey || isSelected) {
           e.stopPropagation(); // select the deepest clicked panel, not parent tab panels
           togglePanelSelected(childId, tabId);
         }
       },
-      [
-        childId,
-        tabId,
-        togglePanelSelected,
-        shiftKeyPressed,
-        isSelected,
-        setSelectedPanelIds,
-        panelSettingsOpen,
-      ],
+      [childId, tabId, togglePanelSelected, isSelected, setSelectedPanelIds, panelSettingsOpen],
     );
 
     const groupPanels = useCallback(() => {
@@ -446,7 +373,7 @@ export default function Panel<
         return;
       }
       const tabSavedProps = tabId != undefined ? (savedProps[tabId] as TabPanelConfig) : undefined;
-      if (tabId != undefined && tabSavedProps != undefined && childId != undefined) {
+      if (tabId != undefined && tabSavedProps != undefined) {
         const newId = getPanelIdForType(PanelComponent.panelType);
         const activeTabLayout = tabSavedProps.tabs[tabSavedProps.activeTabIdx]?.layout;
         if (activeTabLayout == undefined) {
@@ -478,13 +405,8 @@ export default function Panel<
       tabId,
     ]);
 
-    const { onMouseMove, enterFullscreen, exitFullscreen } = useMemo(
+    const { enterFullscreen, exitFullscreen } = useMemo(
       () => ({
-        onMouseMove: ((e) => {
-          if (e.metaKey !== cmdKeyPressed) {
-            setCmdKeyPressed(e.metaKey);
-          }
-        }) as MouseEventHandler<HTMLDivElement>,
         enterFullscreen: () => {
           setFullscreenSourceRect(panelRootRef.current?.getBoundingClientRect());
           setFullscreen(true);
@@ -498,7 +420,7 @@ export default function Panel<
           setFullscreen(false);
         },
       }),
-      [cmdKeyPressed, parentPanelContext],
+      [parentPanelContext],
     );
 
     const setHasFullscreenDescendant = useCallback(
@@ -510,57 +432,65 @@ export default function Panel<
       [parentPanelContext],
     );
 
+    const {
+      isDragging,
+      isOver,
+      isValidTarget,
+      connectMessagePathDropTarget,
+      dropMessage,
+      setMessagePathDropConfig,
+    } = useMessagePathDrop();
+
     // We use two separate sets of key handlers because the panel context and exitFullScreen
     // change often and invalidate our key handlers during user interactions.
     const { keyUpHandlers, keyDownHandlers } = useMemo(
       () => ({
         keyUpHandlers: {
-          "`": () => setQuickActionsKeyPressed(false),
-          "~": () => setQuickActionsKeyPressed(false),
-          Shift: () => setShiftKeyPressed(false),
-          Meta: () => setCmdKeyPressed(false),
+          "`": () => {
+            setQuickActionsKeyPressed(false);
+          },
+          "~": () => {
+            setQuickActionsKeyPressed(false);
+          },
         },
         keyDownHandlers: {
           a: (e: KeyboardEvent) => {
             e.preventDefault();
-            if (cmdKeyPressed) {
+            if (e.metaKey) {
               selectAllPanels();
             }
           },
-          "`": () => setQuickActionsKeyPressed(true),
-          "~": () => setQuickActionsKeyPressed(true),
-          Shift: () => setShiftKeyPressed(true),
-          Meta: () => setCmdKeyPressed(true),
+          "`": () => {
+            setQuickActionsKeyPressed(true);
+          },
+          "~": () => {
+            setQuickActionsKeyPressed(true);
+          },
+          Escape: () => {
+            if (numSelectedPanelsIfSelected > 1) {
+              setSelectedPanelIds([]);
+            }
+          },
         },
       }),
-      [selectAllPanels, cmdKeyPressed],
+      [selectAllPanels, numSelectedPanelsIfSelected, setSelectedPanelIds],
     );
 
     const fullScreenKeyHandlers = useMemo(
       () => ({
-        Escape: () => exitFullscreen(),
+        Escape: () => {
+          exitFullscreen();
+        },
       }),
       [exitFullscreen],
     );
-
-    /* Ensure user exits full-screen mode when leaving window, even if key is still pressed down */
-    useEffect(() => {
-      const listener = () => {
-        exitFullscreen();
-        setCmdKeyPressed(false);
-        setShiftKeyPressed(false);
-        setQuickActionsKeyPressed(false);
-      };
-      window.addEventListener("blur", listener);
-      return () => window.removeEventListener("blur", listener);
-    }, [exitFullscreen]);
 
     const otherPanelProps = useShallowMemo(otherProps);
     const childProps = useMemo(
       // We have to lie to TypeScript with "as PanelProps" because the "PanelProps extends {...}"
       // constraint technically allows the panel to require the types of config/saveConfig be more
       // specific types that aren't satisfied by the functions we pass in
-      () => ({ config: panelComponentConfig, saveConfig, ...otherPanelProps } as PanelProps),
+      () => ({ config: panelComponentConfig, saveConfig, ...otherPanelProps }) as PanelProps,
       [otherPanelProps, panelComponentConfig, saveConfig],
     );
     const child = useMemo(() => <PanelComponent {...childProps} />, [childProps]);
@@ -578,16 +508,99 @@ export default function Panel<
       const overlay = quickActionsOverlayRef.current;
       if (overlay) {
         overlay.style.opacity = "0";
-        setTimeout(() => (overlay.style.opacity = "1"));
+        setTimeout(() => (overlay.style.opacity = "1"), 0);
       }
     }, []);
     const dragSpec = { tabId, panelId: childId, onDragStart };
     const [connectOverlayDragSource, connectOverlayDragPreview] = usePanelDrag(dragSpec);
     const [connectToolbarDragHandle, connectToolbarDragPreview] = usePanelDrag(dragSpec);
 
+    const panelOverlayProps = useMemo(() => {
+      const overlayProps: PanelOverlayProps = {
+        open:
+          isDragging || quickActionsKeyPressed || (isSelected && numSelectedPanelsIfSelected > 1),
+        variant: undefined,
+        highlightMode: undefined,
+        actions: undefined,
+        dropMessage,
+      };
+
+      if (isDragging && !isValidTarget) {
+        overlayProps.variant = "invalidDropTarget";
+      }
+      if (isDragging && isOver) {
+        overlayProps.variant = "validDropTarget";
+      }
+      if (isSelected && numSelectedPanelsIfSelected > 1) {
+        overlayProps.onClickAway = () => {
+          setSelectedPanelIds([]);
+        };
+        overlayProps.variant = "selected";
+        overlayProps.highlightMode = "all";
+        overlayProps.actions = [
+          {
+            key: "group",
+            text: "Group in tab",
+            icon: <TabDesktop20Regular />,
+            onClick: groupPanels,
+          },
+          {
+            key: "create-tabs",
+            text: "Create tabs",
+            icon: (
+              <>
+                <span className={classes.tabCount}>
+                  {numSelectedPanelsIfSelected <= 99 ? numSelectedPanelsIfSelected : ""}{" "}
+                </span>
+                <TabDesktopMultiple20Regular />
+              </>
+            ),
+            onClick: createTabs,
+          },
+        ];
+      }
+      if (type !== TAB_PANEL_TYPE && quickActionsKeyPressed) {
+        overlayProps.variant = "selected";
+        overlayProps.highlightMode = "active";
+      }
+      if (quickActionsKeyPressed) {
+        overlayProps.actions = [
+          {
+            key: "split",
+            text: "Split panel",
+            icon: <TableSimple20Regular />,
+            onClick: splitPanel,
+          },
+          {
+            key: "remove",
+            text: "Remove panel",
+            icon: <Delete20Regular />,
+            color: "error",
+            onClick: removePanel,
+          },
+        ];
+      }
+      return overlayProps;
+    }, [
+      classes.tabCount,
+      createTabs,
+      dropMessage,
+      groupPanels,
+      isDragging,
+      isOver,
+      isSelected,
+      isValidTarget,
+      numSelectedPanelsIfSelected,
+      quickActionsKeyPressed,
+      removePanel,
+      setSelectedPanelIds,
+      splitPanel,
+      type,
+    ]);
+
     return (
       <Profiler
-        id={childId ?? "$unknown_id"}
+        id={childId}
         onRender={(
           _id,
           _phase,
@@ -605,12 +618,13 @@ export default function Panel<
         <PanelContext.Provider
           value={{
             type,
-            id: childId ?? "$unknown_id",
+            id: childId,
             title,
             config: panelComponentConfig,
             saveConfig: saveConfig as SaveConfig<PanelConfig>,
             updatePanelConfigs,
             openSiblingPanel,
+            replacePanel,
             enterFullscreen,
             exitFullscreen,
             setHasFullscreenDescendant,
@@ -618,25 +632,30 @@ export default function Panel<
             tabId,
             // disallow dragging the root panel in a layout
             connectToolbarDragHandle: isTopLevelPanel ? undefined : connectToolbarDragHandle,
+            setMessagePathDropConfig,
           }}
         >
           <KeyListener global keyUpHandlers={keyUpHandlers} keyDownHandlers={keyDownHandlers} />
           {fullscreen && <KeyListener global keyDownHandlers={fullScreenKeyHandlers} />}
           <Transition
             in={fullscreen}
-            timeout={{ exit: FULLSCREEN_TRANSITION_DURATION_MS }}
-            onExited={() => setHasFullscreenDescendant(false)}
+            onExited={() => {
+              setHasFullscreenDescendant(false);
+            }}
             nodeRef={panelRootRef}
+            timeout={{
+              // match to transition duration inside PanelRoot
+              exit: theme.transitions.duration.shorter,
+            }}
           >
             {(fullscreenState) => (
               <PanelRoot
                 onClick={onPanelRootClick}
-                onMouseMove={onMouseMove}
                 hasFullscreenDescendant={hasFullscreenDescendant}
                 fullscreenState={fullscreenState}
                 sourceRect={fullscreenSourceRect}
-                selected={isSelected}
-                data-test={`panel-mouseenter-container ${childId ?? ""}`}
+                selected={isSelected || (isDragging && isValidTarget && isOver)}
+                data-testid={cx("panel-mouseenter-container", childId)}
                 ref={(el) => {
                   panelRootRef.current = el;
                   // disallow dragging the root panel in a layout
@@ -644,26 +663,12 @@ export default function Panel<
                     connectOverlayDragPreview(el);
                     connectToolbarDragPreview(el);
                   }
+                  connectMessagePathDropTarget(el);
                 }}
               >
-                {isSelected && !fullscreen && numSelectedPanelsIfSelected > 1 && (
-                  <ActionsOverlay>
-                    <Button className={classes.tabActionsOverlayButton} onClick={groupPanels}>
-                      <Icon size="small" style={{ marginBottom: 5 }}>
-                        <BorderAllIcon />
-                      </Icon>
-                      Group in tab
-                    </Button>
-                    <Button className={classes.tabActionsOverlayButton} onClick={createTabs}>
-                      <Icon size="small" style={{ marginBottom: 5 }}>
-                        <ExpandAllOutlineIcon />
-                      </Icon>
-                      Create {numSelectedPanelsIfSelected} tabs
-                    </Button>
-                  </ActionsOverlay>
-                )}
-                {type !== TAB_PANEL_TYPE && quickActionsKeyPressed && !fullscreen && (
-                  <ActionsOverlay
+                {!fullscreen && type !== TAB_PANEL_TYPE && (
+                  <PanelOverlay
+                    {...panelOverlayProps}
                     ref={(el) => {
                       quickActionsOverlayRef.current = el;
                       // disallow dragging the root panel in a layout
@@ -671,18 +676,7 @@ export default function Panel<
                         connectOverlayDragSource(el);
                       }
                     }}
-                  >
-                    <div>
-                      <Button className={classes.quickActionsOverlayButton} onClick={removePanel}>
-                        <TrashCanOutlineIcon />
-                        Remove
-                      </Button>
-                      <Button className={classes.quickActionsOverlayButton} onClick={splitPanel}>
-                        <GridLargeIcon />
-                        Split
-                      </Button>
-                    </div>
-                  </ActionsOverlay>
+                  />
                 )}
                 <PanelErrorBoundary onRemovePanel={removePanel} onResetPanel={resetPanel}>
                   <React.StrictMode>{child}</React.StrictMode>

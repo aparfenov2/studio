@@ -12,9 +12,10 @@
 //   You may not use this file except in compliance with the License.
 
 import { Stack } from "@mui/material";
-import { storiesOf } from "@storybook/react";
+import { StoryObj } from "@storybook/react";
+import { screen, userEvent, waitFor, within } from "@storybook/testing-library";
+import { useState } from "react";
 
-import MockPanelContextProvider from "@foxglove/studio-base/components/MockPanelContextProvider";
 import { Topic } from "@foxglove/studio-base/players/types";
 import PanelSetup, { Fixture } from "@foxglove/studio-base/stories/PanelSetup";
 import { basicDatatypes } from "@foxglove/studio-base/util/basicDatatypes";
@@ -26,7 +27,7 @@ let manyTopics: Topic[] = [];
 for (let i = 0; i < 10; i++) {
   manyTopics = manyTopics.concat(
     Array.from(basicDatatypes.keys()).map(
-      (datatype): Topic => ({ name: `/${datatype.toLowerCase()}/${i}`, datatype }),
+      (schemaName): Topic => ({ name: `/${schemaName.toLowerCase()}/${i}`, schemaName }),
     ),
   );
 }
@@ -38,120 +39,213 @@ const heavyFixture: Fixture = {
   globalVariables: { global_var_1: 42, global_var_2: 10 },
 };
 
-const clickInput = (el: HTMLDivElement) => {
-  const firstInput = el.querySelector("input");
-  if (firstInput) {
-    firstInput.focus();
-  }
+const clickInput: StoryObj["play"] = async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  await userEvent.click(await canvas.findByTestId("autocomplete-textfield"));
 };
 
-function MessagePathInputStory(props: { path: string; prioritizedDatatype?: string }) {
-  const [path, setPath] = React.useState(props.path);
+function MessagePathInputStory(props: {
+  path: string;
+  prioritizedDatatype?: string;
+  validTypes?: string[];
+  heavy?: boolean;
+}): JSX.Element {
+  const [path, setPath] = useState(props.path);
 
   return (
-    <MockPanelContextProvider>
-      <PanelSetup fixture={MessagePathInputStoryFixture} onMount={clickInput}>
-        <Stack direction="row" flex="auto" margin={1.25}>
-          <MessagePathInput
-            autoSize={false}
-            path={path}
-            prioritizedDatatype={props.prioritizedDatatype}
-            onChange={(newPath) => setPath(newPath)}
-          />
-        </Stack>
-      </PanelSetup>
-    </MockPanelContextProvider>
+    <PanelSetup fixture={props.heavy ?? false ? heavyFixture : MessagePathInputStoryFixture}>
+      <Stack direction="row" flex="auto" margin={1.25}>
+        <MessagePathInput
+          autoSize={false}
+          path={path}
+          validTypes={props.validTypes}
+          prioritizedDatatype={props.prioritizedDatatype}
+          onChange={(newPath) => {
+            setPath(newPath);
+          }}
+        />
+      </Stack>
+    </PanelSetup>
   );
 }
 
-function MessagePathPerformanceStory(props: { path: string; prioritizedDatatype?: string }) {
-  const [path, setPath] = React.useState(props.path);
+export default {
+  title: "components/MessagePathInput",
+  parameters: {
+    colorScheme: "dark",
+  },
+};
 
-  return (
-    <MockPanelContextProvider>
-      <PanelSetup fixture={heavyFixture} onMount={clickInput}>
-        <Stack direction="row" flex="auto" margin={1.25}>
-          <MessagePathInput
-            autoSize={false}
-            path={path}
-            prioritizedDatatype={props.prioritizedDatatype}
-            onChange={(newPath) => setPath(newPath)}
-          />
-        </Stack>
-      </PanelSetup>
-    </MockPanelContextProvider>
-  );
-}
+type MsgPathInputStoryObj = StoryObj<typeof MessagePathInputStory>;
 
-storiesOf("components/MessagePathInput", module)
-  .addParameters({ colorScheme: "dark" })
-  .add("path with header fields", () => {
-    return <MessagePathInputStory path="/some_topic/state.header.stamp.sec" />;
-  })
-  .add("autocomplete topics", () => {
-    return <MessagePathInputStory path="/" />;
-  })
-  .add("autocomplete messagePath", () => {
-    return <MessagePathInputStory path="/some_topic/location.po" />;
-  })
-  .add(
-    "autocomplete messagePath light",
-    () => {
-      return <MessagePathInputStory path="/some_topic/location.po" />;
-    },
-    { colorScheme: "light" },
-  )
-  .add("autocomplete filter", () => {
-    return <MessagePathInputStory path="/some_topic/state.items[:]{}" />;
-  })
-  .add("autocomplete top level filter", () => {
-    return <MessagePathInputStory path="/some_topic/state{}" />;
-  })
-  .add("autocomplete for globalVariables variables", () => {
-    return <MessagePathInputStory path="/some_topic/state{foo_id==0}.items[:]{id==$}" />;
-  })
-  .add("path with valid globalVariables variable", () => {
-    return <MessagePathInputStory path="/some_topic/state.items[:]{id==$global_var_2}" />;
-  })
-  .add("path with invalid globalVariables variable", () => {
-    return <MessagePathInputStory path="/some_topic/state.items[:]{id==$global_var_3}" />;
-  })
-  .add("path with incorrectly prefixed globalVariables variable", () => {
-    return <MessagePathInputStory path="/some_topic/state.items[:]{id==global_var_2}" />;
-  })
-  .add("autocomplete for path with globalVariables variable in slice (single idx)", () => {
-    return <MessagePathInputStory path="/some_topic/state.items[$]" />;
-  })
-  .add("autocomplete for path with globalVariables variable in slice (start idx)", () => {
-    return <MessagePathInputStory path="/some_topic/state.items[$:]" />;
-  })
-  .add("autocomplete for path with globalVariables variable in slice (end idx)", () => {
-    return <MessagePathInputStory path="/some_topic/state.items[:$]" />;
-  })
-  .add("autocomplete for path with globalVariables variables in slice (start and end idx)", () => {
-    return <MessagePathInputStory path="/some_topic/state.items[$global_var_2:$]" />;
-  })
-  .add("path with invalid math modifier", () => {
-    return <MessagePathInputStory path="/some_topic/location.pose.x.@negative" />;
-  })
-  .add("autocomplete when prioritized datatype is available", () => {
-    return <MessagePathInputStory path="/" prioritizedDatatype="msgs/State" />;
-  })
-  .add("autocomplete for message with json field", () => {
-    return <MessagePathInputStory path="/some_logs_topic." />;
-  })
-  .add("autocomplete for path with existing filter", () => {
-    return <MessagePathInputStory path="/some_topic/state.items[:]{id==1}." />;
-  })
-  .add("autocomplete for path with existing filter using a global variable", () => {
-    return <MessagePathInputStory path="/some_topic/state.items[:]{id==$global_var_2}." />;
-  })
-  .add("path for field inside json object", () => {
-    return <MessagePathInputStory path="/some_logs_topic.myJson" />;
-  })
-  .add("path for multiple levels of nested fields inside json object", () => {
-    return <MessagePathInputStory path="/some_logs_topic.myJson.a.b.c" />;
-  })
-  .add("performance testing", () => {
-    return <MessagePathPerformanceStory path="." />;
-  });
+export const PathWithHeaderFields: MsgPathInputStoryObj = {
+  render: MessagePathInputStory,
+  args: { path: "/some_topic/state.header.stamp.sec" },
+  play: clickInput,
+};
+
+export const AutocompleteTopics: MsgPathInputStoryObj = {
+  render: MessagePathInputStory,
+  args: { path: "/" },
+  play: clickInput,
+};
+
+export const AutocompleteScalarFromTopicAndEmptyPath: MsgPathInputStoryObj = {
+  render: MessagePathInputStory,
+  args: { path: "", validTypes: ["int32"] },
+  play: async ({ canvasElement }) => {
+    const { click } = userEvent.setup();
+    const canvas = within(canvasElement);
+
+    await click(await canvas.findByTestId("autocomplete-textfield"));
+    const options = await waitFor(() => screen.queryAllByTestId("autocomplete-item"));
+    await click(options[2]!);
+  },
+};
+
+export const AutocompleteScalarFromTopic: MsgPathInputStoryObj = {
+  render: MessagePathInputStory,
+  args: { path: "", validTypes: ["int32"] },
+  play: async ({ canvasElement }) => {
+    const { click, keyboard } = userEvent.setup();
+    const canvas = within(canvasElement);
+    const input = await canvas.findByTestId("autocomplete-textfield");
+
+    await click(input);
+    await keyboard("/some_logs_");
+
+    const options = await waitFor(() => screen.queryAllByTestId("autocomplete-item"));
+    await click(options[1]!);
+  },
+};
+
+export const AutocompleteScalarFromFullTopic: MsgPathInputStoryObj = {
+  render: MessagePathInputStory,
+  args: { path: "", validTypes: ["int32"] },
+  play: async ({ canvasElement }) => {
+    const { click, keyboard } = userEvent.setup();
+    const canvas = within(canvasElement);
+    const input = await canvas.findByTestId("autocomplete-textfield");
+
+    await click(input);
+    await keyboard("/some_logs_topic");
+
+    const options = await waitFor(() => screen.queryAllByTestId("autocomplete-item"));
+    await click(options[0]!);
+  },
+};
+
+export const AutocompleteMessagePath: MsgPathInputStoryObj = {
+  render: MessagePathInputStory,
+  args: { path: "/some_topic/location.po" },
+  name: "Autocomplete messagePath",
+  play: clickInput,
+};
+
+export const AutocompleteMessagePathLight: MsgPathInputStoryObj = {
+  render: MessagePathInputStory,
+  args: { path: "/some_topic/location.po" },
+  name: "Autocomplete messagePath light",
+  parameters: { colorScheme: "light" },
+  play: clickInput,
+};
+
+export const AutocompleteFilter: MsgPathInputStoryObj = {
+  render: MessagePathInputStory,
+  args: { path: "/some_topic/state.items[:]{}" },
+  play: clickInput,
+};
+
+export const AutocompleteTopLevelFilter: MsgPathInputStoryObj = {
+  render: MessagePathInputStory,
+  args: { path: "/some_topic/state{}" },
+  play: clickInput,
+};
+
+export const AutocompleteForGlobalVariablesVariables: MsgPathInputStoryObj = {
+  render: MessagePathInputStory,
+  args: { path: "/some_topic/state{foo_id==0}.items[:]{id==$}" },
+  name: "Autocomplete for globalVariables variables",
+  play: clickInput,
+};
+
+export const PathWithValidGlobalVariablesVariable: MsgPathInputStoryObj = {
+  render: MessagePathInputStory,
+  args: { path: "/some_topic/state.items[:]{id==$global_var_2}" },
+  name: "Path with valid globalVariables variable",
+  play: clickInput,
+};
+
+export const PathWithInvalidGlobalVariablesVariable: MsgPathInputStoryObj = {
+  render: MessagePathInputStory,
+  args: { path: "/some_topic/state.items[:]{id==$global_var_3}" },
+  name: "Path with invalid globalVariables variable",
+  play: clickInput,
+};
+
+export const PathWithIncorrectlyPrefixedGlobalVariablesVariable: MsgPathInputStoryObj = {
+  render: MessagePathInputStory,
+  args: { path: "/some_topic/state.items[:]{id==global_var_2}" },
+  name: "Path with incorrectly prefixed globalVariables variable",
+  play: clickInput,
+};
+
+export const AutocompleteForPathWithGlobalVariablesVariableInSliceSingleIdx: MsgPathInputStoryObj =
+  {
+    render: MessagePathInputStory,
+    args: { path: "/some_topic/state.items[$]" },
+    name: "Autocomplete for path with globalVariables variable in slice (single idx)",
+    play: clickInput,
+  };
+
+export const AutocompleteForPathWithGlobalVariablesVariableInSliceStartIdx: MsgPathInputStoryObj = {
+  render: MessagePathInputStory,
+  args: { path: "/some_topic/state.items[$:]" },
+  name: "Autocomplete for path with globalVariables variable in slice (start idx)",
+  play: clickInput,
+};
+
+export const AutocompleteForPathWithGlobalVariablesVariableInSliceEndIdx: MsgPathInputStoryObj = {
+  render: MessagePathInputStory,
+  args: { path: "/some_topic/state.items[:$]" },
+  name: "Autocomplete for path with globalVariables variable in slice (end idx)",
+  play: clickInput,
+};
+
+export const AutocompleteForPathWithGlobalVariablesVariablesInSliceStartAndEndIdx: MsgPathInputStoryObj =
+  {
+    render: MessagePathInputStory,
+    args: { path: "/some_topic/state.items[$global_var_2:$]" },
+    name: "Autocomplete for path with globalVariables variables in slice (start and end idx)",
+    play: clickInput,
+  };
+
+export const PathWithInvalidMathModifier: MsgPathInputStoryObj = {
+  render: MessagePathInputStory,
+  args: { path: "/some_topic/location.pose.x.@negative" },
+  play: clickInput,
+};
+
+export const AutocompleteWhenPrioritizedDatatypeIsAvailable: MsgPathInputStoryObj = {
+  render: MessagePathInputStory,
+  args: { path: "/", prioritizedDatatype: "msgs/State" },
+  play: clickInput,
+};
+
+export const AutocompleteForPathWithExistingFilter: MsgPathInputStoryObj = {
+  render: MessagePathInputStory,
+  args: { path: "/some_topic/state.items[:]{id==1}." },
+  play: clickInput,
+};
+
+export const AutocompleteForPathWithExistingFilterUsingAGlobalVariable: MsgPathInputStoryObj = {
+  render: MessagePathInputStory,
+  args: { path: "/some_topic/state.items[:]{id==$global_var_2}." },
+  play: clickInput,
+};
+
+export const PerformanceTesting: MsgPathInputStoryObj = {
+  render: MessagePathInputStory,
+  args: { path: ".", heavy: true },
+  play: clickInput,
+};

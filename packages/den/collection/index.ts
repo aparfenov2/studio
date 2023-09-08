@@ -3,3 +3,8 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 export { default as filterMap } from "./filterMap";
+export * from "./ArrayMap";
+export * from "./binarySearch";
+export * from "./minIndexBy";
+export * from "./MultiMap";
+export * from "./VecQueue";

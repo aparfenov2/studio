@@ -11,10 +11,10 @@ import { Mutex } from "async-mutex";
  * access to be protected by the mutex.
  */
 export default class MutexLocked<T> {
-  private mutex = new Mutex();
-  constructor(private value: T) {}
+  #mutex = new Mutex();
+  public constructor(private value: T) {}
 
-  async runExclusive<Result>(body: (value: T) => Promise<Result>): Promise<Result> {
-    return await this.mutex.runExclusive(async () => await body(this.value));
+  public async runExclusive<Result>(body: (value: T) => Promise<Result>): Promise<Result> {
+    return await this.#mutex.runExclusive(async () => await body(this.value));
   }
 }

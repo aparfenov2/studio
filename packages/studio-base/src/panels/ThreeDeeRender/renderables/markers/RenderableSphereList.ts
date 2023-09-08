@@ -4,50 +4,54 @@
 
 import * as THREE from "three";
 
+import { RenderableMarker } from "./RenderableMarker";
+import { createGeometry as createSphereGeometry } from "./RenderableSphere";
+import { markerHasTransparency, makeStandardInstancedMaterial } from "./materials";
 import { DynamicInstancedMesh } from "../../DynamicInstancedMesh";
 import type { Renderer } from "../../Renderer";
 import { Marker } from "../../ros";
-import { RenderableMarker } from "./RenderableMarker";
-import { RenderableSphere } from "./RenderableSphere";
-import {
-  markerHasTransparency,
-  releaseStandardInstancedMaterial,
-  standardInstancedMaterial,
-} from "./materials";
 
 export class RenderableSphereList extends RenderableMarker {
-  mesh: DynamicInstancedMesh<THREE.SphereGeometry, THREE.Material>;
+  #mesh: DynamicInstancedMesh<THREE.SphereGeometry, THREE.MeshStandardMaterial>;
 
-  constructor(topic: string, marker: Marker, renderer: Renderer) {
-    super(topic, marker, renderer);
+  public constructor(
+    topic: string,
+    marker: Marker,
+    receiveTime: bigint | undefined,
+    renderer: Renderer,
+  ) {
+    super(topic, marker, receiveTime, renderer);
 
     // Sphere instanced mesh
-    const material = standardInstancedMaterial(marker, renderer.materialCache);
-    this.mesh = new DynamicInstancedMesh(
-      RenderableSphere.geometry(renderer.maxLod),
-      material,
-      marker.points.length,
+    const geometry = renderer.sharedGeometry.getGeometry(
+      `RenderableSphere-${renderer.maxLod}`,
+      () => createSphereGeometry(renderer.maxLod),
     );
-    this.mesh.castShadow = true;
-    this.mesh.receiveShadow = true;
-    this.add(this.mesh);
+    const material = makeStandardInstancedMaterial(marker);
+    this.#mesh = new DynamicInstancedMesh(geometry, material, marker.points.length);
+    this.#mesh.castShadow = true;
+    this.#mesh.receiveShadow = true;
+    this.add(this.#mesh);
 
-    this.update(marker);
+    this.update(marker, receiveTime);
   }
 
-  override dispose(): void {
-    releaseStandardInstancedMaterial(this.userData.marker, this._renderer.materialCache);
+  public override dispose(): void {
+    this.#mesh.material.dispose();
   }
 
-  override update(marker: Marker): void {
+  public override update(newMarker: Marker, receiveTime: bigint | undefined): void {
     const prevMarker = this.userData.marker;
-    super.update(marker);
+    super.update(newMarker, receiveTime);
+    const marker = this.userData.marker;
 
-    if (markerHasTransparency(marker) !== markerHasTransparency(prevMarker)) {
-      releaseStandardInstancedMaterial(prevMarker, this._renderer.materialCache);
-      this.mesh.material = standardInstancedMaterial(marker, this._renderer.materialCache);
+    const transparent = markerHasTransparency(marker);
+    if (transparent !== markerHasTransparency(prevMarker)) {
+      this.#mesh.material.transparent = transparent;
+      this.#mesh.material.depthWrite = !transparent;
+      this.#mesh.material.needsUpdate = true;
     }
 
-    this.mesh.set(marker.points, marker.scale, marker.colors, marker.color);
+    this.#mesh.set(marker.points, marker.scale, marker.colors, marker.color);
   }
 }

@@ -14,6 +14,7 @@
 import { Chart, ChartData, ChartOptions, ChartType } from "chart.js";
 import type { Context as DatalabelContext } from "chartjs-plugin-datalabels";
 import DatalabelPlugin from "chartjs-plugin-datalabels";
+import { type Options as DatalabelsPluginOptions } from "chartjs-plugin-datalabels/types/options";
 import EventEmitter from "eventemitter3";
 
 import { Zoom as ZoomPlugin } from "@foxglove/chartjs-plugin-zoom";
@@ -22,13 +23,17 @@ import { RpcElement, RpcScales } from "@foxglove/studio-base/components/Chart/ty
 import { maybeCast } from "@foxglove/studio-base/util/maybeCast";
 import { fonts } from "@foxglove/studio-base/util/sharedStyleConstants";
 
+import { lineSegmentLabelColor } from "./lineSegments";
+import { proxyTyped } from "./proxy";
+import { TypedChartData } from "../types";
+
 const log = Logger.getLogger(__filename);
 
 export type InitOpts = {
   id: string;
   node: { canvas: HTMLCanvasElement };
   type: ChartType;
-  data: ChartData;
+  data: ChartData<"scatter">;
   options: ChartOptions;
   devicePixelRatio: number;
   fontLoaded: Promise<FontFace>;
@@ -65,19 +70,17 @@ type ZoomableChart = Chart & {
 };
 
 export default class ChartJSManager {
-  private _chartInstance?: Chart;
-  private _fakeNodeEvents = new EventEmitter();
-  private _fakeDocumentEvents = new EventEmitter();
-  private _lastDatalabelClickContext?: DatalabelContext;
-  private _hasZoomed = false;
-  private _hasPanned = false;
+  #chartInstance?: Chart;
+  #fakeNodeEvents = new EventEmitter();
+  #fakeDocumentEvents = new EventEmitter();
+  #lastDatalabelClickContext?: DatalabelContext;
 
-  constructor(initOpts: InitOpts) {
+  public constructor(initOpts: InitOpts) {
     log.info(`new ChartJSManager(id=${initOpts.id})`);
     void this.init(initOpts);
   }
 
-  async init({
+  public async init({
     id,
     node,
     type,
@@ -89,12 +92,22 @@ export default class ChartJSManager {
     const font = await fontLoaded;
     log.debug(`ChartJSManager(${id}) init, default font "${font.family}" status=${font.status}`);
 
+    // the types are wrong on `init`, but we will fix this soon
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+    if (data != undefined) {
+      for (const ds of data.datasets) {
+        ds.segment = {
+          borderColor: lineSegmentLabelColor,
+        };
+      }
+    }
+
     const fakeNode = {
-      addEventListener: addEventListener(this._fakeNodeEvents),
-      removeEventListener: removeEventListener(this._fakeNodeEvents),
+      addEventListener: addEventListener(this.#fakeNodeEvents),
+      removeEventListener: removeEventListener(this.#fakeNodeEvents),
       ownerDocument: {
-        addEventListener: addEventListener(this._fakeDocumentEvents),
-        removeEventListener: removeEventListener(this._fakeDocumentEvents),
+        addEventListener: addEventListener(this.#fakeDocumentEvents),
+        removeEventListener: removeEventListener(this.#fakeDocumentEvents),
       },
     };
 
@@ -111,7 +124,7 @@ export default class ChartJSManager {
     };
 
     const fullOptions: ChartOptions = {
-      ...this.addFunctionsToConfig(options),
+      ...this.#addFunctionsToConfig(options),
       devicePixelRatio,
       font: { family: fonts.MONOSPACE },
       // we force responsive off since we manually trigger width/height updates on the chart
@@ -128,93 +141,105 @@ export default class ChartJSManager {
     });
 
     ZoomPlugin.start = origZoomStart;
-    this._chartInstance = chartInstance;
+    this.#chartInstance = chartInstance;
   }
 
-  wheel(event: WheelEvent): RpcScales {
+  public wheel(event: WheelEvent): RpcScales {
     const target = event.target as Element & { boundingClientRect: DOMRect };
     target.getBoundingClientRect = () => target.boundingClientRect;
-    this._fakeNodeEvents.emit("wheel", event);
+    this.#fakeNodeEvents.emit("wheel", event);
     return this.getScales();
   }
 
-  mousedown(event: MouseEvent): RpcScales {
+  public mousedown(event: MouseEvent): RpcScales {
     const target = event.target as Element & { boundingClientRect: DOMRect };
     target.getBoundingClientRect = () => target.boundingClientRect;
-    this._fakeNodeEvents.emit("mousedown", event);
+    this.#fakeNodeEvents.emit("mousedown", event);
     return this.getScales();
   }
 
-  mousemove(event: MouseEvent): RpcScales {
+  public mousemove(event: MouseEvent): RpcScales {
     const target = event.target as Element & { boundingClientRect: DOMRect };
     target.getBoundingClientRect = () => target.boundingClientRect;
-    this._fakeNodeEvents.emit("mousemove", event);
+    this.#fakeNodeEvents.emit("mousemove", event);
     return this.getScales();
   }
 
-  mouseup(event: MouseEvent): RpcScales {
+  public mouseup(event: MouseEvent): RpcScales {
     const target = event.target as Element & { boundingClientRect: DOMRect };
     target.getBoundingClientRect = () => target.boundingClientRect;
-    this._fakeDocumentEvents.emit("mouseup", event);
+    this.#fakeDocumentEvents.emit("mouseup", event);
     return this.getScales();
   }
 
-  panstart(event: HammerInput): RpcScales {
+  public panstart(event: HammerInput): RpcScales {
     const target = event.target as HTMLElement & { boundingClientRect: DOMRect };
     target.getBoundingClientRect = () => target.boundingClientRect;
-    maybeCast<ZoomableChart>(this._chartInstance)?.$zoom.panStartHandler(event);
+    maybeCast<ZoomableChart>(this.#chartInstance)?.$zoom.panStartHandler(event);
     return this.getScales();
   }
 
-  panmove(event: HammerInput): RpcScales {
+  public panmove(event: HammerInput): RpcScales {
     const target = event.target as HTMLElement & { boundingClientRect: DOMRect };
     target.getBoundingClientRect = () => target.boundingClientRect;
-    maybeCast<ZoomableChart>(this._chartInstance)?.$zoom.panHandler(event);
+    maybeCast<ZoomableChart>(this.#chartInstance)?.$zoom.panHandler(event);
     return this.getScales();
   }
 
-  panend(event: HammerInput): RpcScales {
+  public panend(event: HammerInput): RpcScales {
     const target = event.target as HTMLElement & { boundingClientRect: DOMRect };
     target.getBoundingClientRect = () => target.boundingClientRect;
-    maybeCast<ZoomableChart>(this._chartInstance)?.$zoom.panEndHandler(event);
+    maybeCast<ZoomableChart>(this.#chartInstance)?.$zoom.panEndHandler(event);
     return this.getScales();
   }
 
-  update({
+  public update({
     options,
     width,
     height,
+    isBoundsReset,
     data,
+    typedData,
   }: {
     options?: ChartOptions;
     width?: number;
     height?: number;
-    data?: ChartData;
+    isBoundsReset: boolean;
+    data?: ChartData<"scatter">;
+    typedData?: TypedChartData;
   }): RpcScales {
-    const instance = this._chartInstance;
+    const instance = this.#chartInstance;
     if (instance == undefined) {
       return {};
     }
 
+    for (const ds of data?.datasets ?? []) {
+      // Apply a line segment coloring function, if the label color is present in the data points.
+      // This has to happen here because functions can't be serialized to the chart worker. The
+      // state transition panel uses this to apply different colors to each segment of a single
+      // line.
+      ds.segment = {
+        borderColor: lineSegmentLabelColor,
+      };
+    }
+
     if (options != undefined) {
-      instance.options.plugins = this.addFunctionsToConfig(options).plugins;
+      instance.options.plugins = this.#addFunctionsToConfig(options).plugins;
 
-      // If the options specify specific values for min/max then we go back into a state where scales are updated
-      // We need scales to update with undefined values if we haven't zoomed so new data is shown on the chart.
-      // If we do not update the scales to undefined, the initial zoom range stays and new data is not visible.
+      // Let the chart manage its own scales unless we've been told to reset or if an explicit
+      // min and max have been specified.
       const scales = options.scales ?? {};
-      if (scales.x?.min != undefined && scales.x.max != undefined) {
-        this._hasPanned = false;
-        this._hasZoomed = false;
+      if (
+        (isBoundsReset || (scales.x?.min != undefined && scales.x.max != undefined)) &&
+        instance.options.scales
+      ) {
+        instance.options.scales.x = scales.x;
       }
-      if (scales.y?.min != undefined && scales.y.max != undefined) {
-        this._hasPanned = false;
-        this._hasZoomed = false;
-      }
-
-      // If the user manually zoomed or panned this chart we avoid updating the scales since they have updated.
-      if (!this._hasZoomed && !this._hasPanned) {
-        instance.options.scales = options.scales;
+      if (
+        (isBoundsReset || (scales.y?.min != undefined && scales.y.max != undefined)) &&
+        instance.options.scales
+      ) {
+        instance.options.scales.y = scales.y;
       }
     }
 
@@ -250,6 +275,10 @@ export default class ChartJSManager {
       instance.data = data;
     }
 
+    if (typedData != undefined) {
+      instance.data = proxyTyped(typedData);
+    }
+
     // While the chartjs API doesn't indicate update should be called after resize, in practice
     // we've found that performing a resize after an update sometimes results in a blank chart.
     //
@@ -260,11 +289,11 @@ export default class ChartJSManager {
     return this.getScales();
   }
 
-  destroy(): void {
-    this._chartInstance?.destroy();
+  public destroy(): void {
+    this.#chartInstance?.destroy();
   }
 
-  getElementsAtEvent({ event }: { event: MouseEvent }): RpcElement[] {
+  public getElementsAtEvent({ event }: { event: MouseEvent }): RpcElement[] {
     const ev = {
       native: true,
       x: event.clientX,
@@ -274,32 +303,36 @@ export default class ChartJSManager {
     // ev is cast to any because the typings for getElementsAtEventForMode are wrong
     // ev is specified as a dom Event - but the implementation does not require it for the basic platform
     const elements =
-      this._chartInstance?.getElementsAtEventForMode(
+      this.#chartInstance?.getElementsAtEventForMode(
         ev as unknown as Event,
-        this._chartInstance.options.interaction?.mode ?? "intersect",
-        this._chartInstance.options.interaction ?? {},
+        this.#chartInstance.options.interaction?.mode ?? "intersect",
+        this.#chartInstance.options.interaction ?? {},
         false,
       ) ?? [];
 
     const out = new Array<RpcElement>();
 
     for (const element of elements) {
-      const data = this._chartInstance?.data.datasets[element.datasetIndex]?.data[element.index];
+      const data = (this.#chartInstance?.data as ChartData<"scatter"> | undefined)?.datasets[
+        element.datasetIndex
+      ]?.data[element.index];
       if (data == undefined || typeof data === "number") {
         continue;
       }
 
       // turn into an object we can send over the rpc
       out.push({
+        data,
+        datasetIndex: element.datasetIndex,
+        index: element.index,
         view: {
           x: element.element.x,
           y: element.element.y,
         },
-        data,
       });
     }
 
-    // sort elemtents by proximity to the cursor
+    // sort elements by proximity to the cursor
     out.sort((itemA, itemB) => {
       const dxA = event.clientX - itemA.view.x;
       const dyA = event.clientY - itemA.view.y;
@@ -314,23 +347,23 @@ export default class ChartJSManager {
     return out;
   }
 
-  getDatalabelAtEvent({ event }: { event: Event }): unknown {
-    this._chartInstance?.notifyPlugins("beforeEvent", { event });
+  public getDatalabelAtEvent({ event }: { event: Event }): unknown {
+    this.#chartInstance?.notifyPlugins("beforeEvent", { event });
 
     // clear the stored click context - we have consumed it
-    const context = this._lastDatalabelClickContext;
-    this._lastDatalabelClickContext = undefined;
+    const context = this.#lastDatalabelClickContext;
+    this.#lastDatalabelClickContext = undefined;
 
     return context?.dataset.data[context.dataIndex];
   }
 
   // get the current chart scales in an rpc friendly format
   // all rpc methods return the current chart scale since that is the main thing that could change automatically
-  getScales(): RpcScales {
+  public getScales(): RpcScales {
     const scales: RpcScales = {};
 
     // fill our rpc scales - we only support x and y scales for now
-    const xScale = this._chartInstance?.scales.x;
+    const xScale = this.#chartInstance?.scales.x;
     if (xScale) {
       scales.x = {
         pixelMin: xScale.left,
@@ -340,7 +373,7 @@ export default class ChartJSManager {
       };
     }
 
-    const yScale = this._chartInstance?.scales.y;
+    const yScale = this.#chartInstance?.scales.y;
     if (yScale) {
       scales.y = {
         pixelMin: yScale.bottom,
@@ -354,40 +387,29 @@ export default class ChartJSManager {
   }
 
   // We cannot serialize functions over rpc, we add options that require functions here
-  private addFunctionsToConfig(config: ChartOptions): typeof config {
-    if (config.plugins?.datalabels) {
+  #addFunctionsToConfig(config: ChartOptions): typeof config {
+    const datalabelsOptions = config.plugins?.datalabels as DatalabelsPluginOptions | undefined;
+    if (datalabelsOptions) {
       // process _click_ events to get the label we clicked on
       // this is because datalabels does not export any public methods to lookup the clicked label
       // maybe we contribute a patch upstream with the explanation for web-worker use
-      config.plugins.datalabels.listeners = {
+      datalabelsOptions.listeners = {
         click: (context: DatalabelContext) => {
-          this._lastDatalabelClickContext = context;
+          this.#lastDatalabelClickContext = context;
         },
       };
 
       // Only display labels for datapoints that include a "label" property
-      config.plugins.datalabels.formatter = (value: { label?: string }, _context: unknown) => {
+      datalabelsOptions.formatter = (value: { label?: string }, _context: unknown) => {
         // Return "null" if we don't want this label to be displayed.
         // Returning "undefined" falls back to the default formatting and will display
         // eslint-disable-next-line no-restricted-syntax
         return value.label ?? null;
       };
 
-      if (config.plugins.zoom?.zoom) {
-        config.plugins.zoom.zoom.onZoom = () => {
-          this._hasZoomed = true;
-        };
-      }
-
-      if (config.plugins.zoom?.pan) {
-        config.plugins.zoom.pan.onPan = () => {
-          this._hasPanned = true;
-        };
-      }
-
       // Override color so that it can be set per-dataset.
-      const staticColor = config.plugins.datalabels.color ?? "white";
-      config.plugins.datalabels.color = (context: DatalabelContext) => {
+      const staticColor = datalabelsOptions.color ?? "white";
+      datalabelsOptions.color = (context: DatalabelContext) => {
         const value = context.dataset.data[context.dataIndex];
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         return (value as any)?.labelColor ?? staticColor;

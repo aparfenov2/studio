@@ -21,7 +21,7 @@ import {
   DatatypeExtractionError,
   findReturnType,
 } from "@foxglove/studio-base/players/UserNodePlayer/nodeTransformerWorker/typescript/ast";
-import { getNodeProjectConfig } from "@foxglove/studio-base/players/UserNodePlayer/nodeTransformerWorker/typescript/projectConfig";
+import { getUserScriptProjectConfig } from "@foxglove/studio-base/players/UserNodePlayer/nodeTransformerWorker/typescript/projectConfig";
 import {
   baseCompilerOptions,
   transformDiagnosticToMarkerData,
@@ -44,16 +44,20 @@ export const hasTransformerErrors = (nodeData: NodeData): boolean =>
   nodeData.diagnostics.some(({ severity }) => severity === DiagnosticSeverity.Error);
 
 export const getInputTopics = (nodeData: NodeData): NodeData => {
-  // Do not attempt to run if there were any previous errors.
-  if (hasTransformerErrors(nodeData)) {
-    return nodeData;
-  }
-
   const { sourceFile, typeChecker } = nodeData;
   if (!sourceFile || !typeChecker) {
-    throw new Error(
-      "Either the 'sourceFile' or 'typeChecker' is absent. There is a problem with the `compile` step.",
-    );
+    const error = {
+      severity: DiagnosticSeverity.Error,
+      message:
+        "Either the 'sourceFile' or 'typeChecker' is absent. There is a problem with the `compile` step.",
+      source: Sources.InputTopicsChecker,
+      code: ErrorCodes.InputTopicsChecker.BAD_INPUTS_TYPE,
+    };
+
+    return {
+      ...nodeData,
+      diagnostics: [...nodeData.diagnostics, error],
+    };
   }
 
   const symbol = typeChecker.getSymbolAtLocation(sourceFile);
@@ -72,6 +76,7 @@ export const getInputTopics = (nodeData: NodeData): NodeData => {
 
   const inputsExport = typeChecker
     .getExportsOfModule(symbol)
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-enum-comparison
     .find((node) => node.escapedName === "inputs");
   if (!inputsExport) {
     const error: Diagnostic = {
@@ -213,14 +218,14 @@ export const compile = (nodeData: NodeData): NodeData => {
   const { sourceCode, rosLib, typesLib } = nodeData;
 
   const options: ts.CompilerOptions = baseCompilerOptions;
-  const nodeFileName = "/studio_node/index.ts";
-  const projectConfig = getNodeProjectConfig();
+  const nodeFileName = "/studio_script/index.ts";
+  const projectConfig = getUserScriptProjectConfig();
   const projectCode = new Map<string, string>();
 
   const sourceCodeMap = new Map<string, string>();
   sourceCodeMap.set(nodeFileName, sourceCode);
   sourceCodeMap.set(projectConfig.rosLib.filePath, rosLib);
-  sourceCodeMap.set("/studio_node/generatedTypes.ts", typesLib ? typesLib : generatedTypesLibSrc);
+  sourceCodeMap.set("/studio_script/generatedTypes.ts", typesLib ? typesLib : generatedTypesLibSrc);
 
   projectConfig.utilityFiles.forEach((file) => sourceCodeMap.set(file.filePath, file.sourceCode));
   projectConfig.declarations.forEach((lib) => sourceCodeMap.set(lib.filePath, lib.sourceCode));
@@ -255,7 +260,7 @@ export const compile = (nodeData: NodeData): NodeData => {
     },
     writeFile: (name: string, data: string) => {
       codeEmitted = true;
-      if (name === "/studio_node/index.js") {
+      if (name === "/studio_script/index.js") {
         transpiledCode = data;
       } else {
         // It's one of our utility files
@@ -279,10 +284,17 @@ export const compile = (nodeData: NodeData): NodeData => {
   program.emit();
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   if (!codeEmitted) {
-    // TODO: Remove after this has been running in prod for a while, and we haven't seen anything in Sentry.
-    throw new Error(
-      "Program code was not emitted. This should never happen as program.emit() is supposed to be synchronous.",
-    );
+    const error = {
+      severity: DiagnosticSeverity.Error,
+      message: "Program code was not emitted.",
+      source: Sources.InputTopicsChecker,
+      code: ErrorCodes.InputTopicsChecker.BAD_INPUTS_TYPE,
+    };
+
+    return {
+      ...nodeData,
+      diagnostics: [...nodeData.diagnostics, error],
+    };
   }
 
   const diagnostics = [...program.getSemanticDiagnostics(), ...program.getSyntacticDiagnostics()];
@@ -385,14 +397,21 @@ export const extractDatatypes = (nodeData: NodeData): NodeData => {
       return { ...nodeData, diagnostics: [...nodeData.diagnostics, error.diagnostic] };
     }
 
-    throw error;
+    return {
+      ...nodeData,
+      diagnostics: [
+        ...nodeData.diagnostics,
+        {
+          message: error.message,
+          severity: DiagnosticSeverity.Error,
+          source: Sources.DatatypeExtraction,
+          code: ErrorCodes.DatatypeExtraction.UNKNOWN_ERROR,
+        },
+      ],
+    };
   }
 };
 
-/*
-TODO:
-  - what happens when the `register` portion of the node pipeline fails to instantiate the code? can we get the stack trace?
-*/
 export const compose = (...transformers: NodeDataTransformer[]): NodeDataTransformer => {
   return (nodeData: NodeData, topics: Topic[]) => {
     let newNodeData = nodeData;

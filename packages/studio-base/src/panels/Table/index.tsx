@@ -11,7 +11,8 @@
 //   found at http://www.apache.org/licenses/LICENSE-2.0
 //   You may not use this file except in compliance with the License.
 
-import { Box, Stack } from "@mui/material";
+import { useEffect } from "react";
+import { makeStyles } from "tss-react/mui";
 
 import { useMessagesByTopic } from "@foxglove/studio-base/PanelAPI";
 import EmptyState from "@foxglove/studio-base/components/EmptyState";
@@ -20,18 +21,30 @@ import { RosPath } from "@foxglove/studio-base/components/MessagePathSyntax/cons
 import parseRosPath from "@foxglove/studio-base/components/MessagePathSyntax/parseRosPath";
 import { useCachedGetMessagePathDataItems } from "@foxglove/studio-base/components/MessagePathSyntax/useCachedGetMessagePathDataItems";
 import Panel from "@foxglove/studio-base/components/Panel";
+import { usePanelContext } from "@foxglove/studio-base/components/PanelContext";
 import PanelToolbar from "@foxglove/studio-base/components/PanelToolbar";
+import Stack from "@foxglove/studio-base/components/Stack";
 import { SaveConfig } from "@foxglove/studio-base/types/panels";
 import { fonts } from "@foxglove/studio-base/util/sharedStyleConstants";
 
 import Table from "./Table";
-import helpContent from "./index.help.md";
 
 type Config = { topicPath: string };
 type Props = { config: Config; saveConfig: SaveConfig<Config> };
 
+const useStyles = makeStyles()({
+  inputWrapper: {
+    width: "100%",
+    lineHeight: "20px",
+  },
+  monospace: {
+    fontFamily: fonts.MONOSPACE,
+  },
+});
+
 function TablePanel({ config, saveConfig }: Props) {
   const { topicPath } = config;
+  const { classes } = useStyles();
   const onTopicPathChange = React.useCallback(
     (newTopicPath: string) => {
       saveConfig({ topicPath: newTopicPath });
@@ -50,25 +63,38 @@ function TablePanel({ config, saveConfig }: Props) {
   const cachedMessages = msg ? cachedGetMessagePathDataItems(topicPath, msg) ?? [] : [];
   const firstCachedMessage = cachedMessages[0];
 
+  const { setMessagePathDropConfig } = usePanelContext();
+
+  useEffect(() => {
+    setMessagePathDropConfig({
+      getDropStatus(_path) {
+        return { canDrop: true, effect: "replace" };
+      },
+      handleDrop(path) {
+        saveConfig({ topicPath: path.path });
+      },
+    });
+  }, [setMessagePathDropConfig, saveConfig]);
+
   return (
     <Stack flex="auto" overflow="hidden" position="relative">
-      <PanelToolbar helpContent={helpContent}>
-        <Box width="100%" lineHeight="20px">
+      <PanelToolbar>
+        <div className={classes.inputWrapper}>
           <MessagePathInput
             index={0}
             path={topicPath}
             onChange={onTopicPathChange}
             inputStyle={{ height: 20 }}
           />
-        </Box>
+        </div>
       </PanelToolbar>
       {topicPath.length === 0 && <EmptyState>No topic selected</EmptyState>}
       {topicPath.length !== 0 && cachedMessages.length === 0 && (
         <EmptyState>Waiting for next message</EmptyState>
       )}
       {topicPath.length !== 0 && firstCachedMessage && (
-        <Stack overflow="auto" fontFamily={fonts.MONOSPACE}>
-          <Table value={firstCachedMessage.value} accessorPath={""} />
+        <Stack overflow="auto" className={classes.monospace}>
+          <Table value={firstCachedMessage.value} accessorPath="" />
         </Stack>
       )}
     </Stack>

@@ -6,60 +6,45 @@ import {
   IDataSourceFactory,
   DataSourceFactoryInitializeArgs,
 } from "@foxglove/studio-base/context/PlayerSelectionContext";
-import { IterablePlayer } from "@foxglove/studio-base/players/IterablePlayer";
-import { BagIterableSource } from "@foxglove/studio-base/players/IterablePlayer/BagIterableSource";
-import RandomAccessPlayer from "@foxglove/studio-base/players/RandomAccessPlayer";
-import Ros1MemoryCacheDataProvider from "@foxglove/studio-base/randomAccessDataProviders/Ros1MemoryCacheDataProvider";
-import WorkerBagDataProvider from "@foxglove/studio-base/randomAccessDataProviders/WorkerBagDataProvider";
-import { getSeekToTime } from "@foxglove/studio-base/util/time";
+import { IterablePlayer, WorkerIterableSource } from "@foxglove/studio-base/players/IterablePlayer";
 
-import * as SampleNuscenesLayout from "./SampleNuscenesLayout.json";
+import SampleNuscenesLayout from "./SampleNuscenesLayout.json";
 
 class SampleNuscenesDataSourceFactory implements IDataSourceFactory {
-  id = "sample-nuscenes";
-  type: IDataSourceFactory["type"] = "sample";
-  displayName = "Sample: Nuscenes";
-  iconName: IDataSourceFactory["iconName"] = "FileASPX";
-  hidden = true;
-  sampleLayout = SampleNuscenesLayout as IDataSourceFactory["sampleLayout"];
+  public id = "sample-nuscenes";
+  public type: IDataSourceFactory["type"] = "sample";
+  public displayName = "Sample: Nuscenes";
+  public iconName: IDataSourceFactory["iconName"] = "FileASPX";
+  public hidden = true;
+  public sampleLayout = SampleNuscenesLayout as IDataSourceFactory["sampleLayout"];
 
-  private enableIterablePlayer = false;
+  public initialize(
+    args: DataSourceFactoryInitializeArgs,
+  ): ReturnType<IDataSourceFactory["initialize"]> {
+    const bagUrl = "https://assets.foxglove.dev/NuScenes-v1.0-mini-scene-0061-df24c12.mcap";
 
-  constructor(opt?: { useIterablePlayer: boolean }) {
-    this.enableIterablePlayer = opt?.useIterablePlayer ?? false;
-  }
+    const source = new WorkerIterableSource({
+      initWorker: () => {
+        return new Worker(
+          // foxglove-depcheck-used: babel-plugin-transform-import-meta
+          new URL(
+            "@foxglove/studio-base/players/IterablePlayer/Mcap/McapIterableSourceWorker.worker",
+            import.meta.url,
+          ),
+        );
+      },
+      initArgs: { url: bagUrl },
+    });
 
-  initialize(args: DataSourceFactoryInitializeArgs): ReturnType<IDataSourceFactory["initialize"]> {
-    const bagUrl =
-      "https://storage.googleapis.com/foxglove-public-assets/nuScenes-v1.0-mini-scene-0061.bag";
-
-    if (this.enableIterablePlayer) {
-      const bagSource = new BagIterableSource({ type: "remote", url: bagUrl });
-      return new IterablePlayer({
-        source: bagSource,
-        isSampleDataSource: true,
-        name: "Adapted from nuScenes dataset.\nCopyright © 2020 nuScenes.\nhttps://www.nuscenes.org/terms-of-use",
-        metricsCollector: args.metricsCollector,
-        // Use blank url params so the data source is set in the url
-        urlParams: {},
-        sourceId: this.id,
-      });
-    } else {
-      const bagWorkerDataProvider = new WorkerBagDataProvider({ type: "remote", url: bagUrl });
-      const messageCacheProvider = new Ros1MemoryCacheDataProvider(bagWorkerDataProvider, {
-        unlimitedCache: args.unlimitedMemoryCache,
-      });
-
-      return new RandomAccessPlayer(messageCacheProvider, {
-        isSampleDataSource: true,
-        metricsCollector: args.metricsCollector,
-        seekToTime: getSeekToTime(),
-        name: "Adapted from nuScenes dataset.\nCopyright © 2020 nuScenes.\nhttps://www.nuscenes.org/terms-of-use",
-        // Use blank url params so the data source is set in the url
-        urlParams: {},
-        sourceId: this.id,
-      });
-    }
+    return new IterablePlayer({
+      source,
+      isSampleDataSource: true,
+      name: "Adapted from nuScenes dataset. Copyright © 2020 nuScenes. https://www.nuscenes.org/terms-of-use",
+      metricsCollector: args.metricsCollector,
+      // Use blank url params so the data source is set in the url
+      urlParams: {},
+      sourceId: this.id,
+    });
   }
 }
 
