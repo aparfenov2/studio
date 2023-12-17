@@ -4,6 +4,7 @@
 
 import {
     Button, Box,
+    Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle,
     FormControl, FormControlLabel,
     Grid,
     InputLabel, InputAdornment,
@@ -18,7 +19,9 @@ import { useCallback, useEffect, useLayoutEffect, useState } from "react";
 import { DeepPartial } from "ts-essentials";
 
 import { ros1 as commonDefs } from "@foxglove/rosmsg-msgs-common";
-import { PanelExtensionContext, Topic } from "@foxglove/studio";
+//import { CompressedImage } from "@foxglove/schemas/schemas/typescript";
+
+import { PanelExtensionContext, RenderState, Topic, MessageEvent } from "@foxglove/studio";
 import EmptyState from "@foxglove/studio-base/components/EmptyState";
 
 import {
@@ -35,6 +38,21 @@ import ThemeProvider from "@foxglove/studio-base/theme/ThemeProvider";
 type MowerPanelProps = {
     context: PanelExtensionContext;
 };
+
+type StdStringMessageDef = {
+    data: string;
+};
+
+type UIStateMsg = {
+    state: {
+        op_mode_state: "manual" | "auto";
+        progress: number;
+        curr_speed: number;
+    },
+    error?: string
+};
+
+type StdStringMessage = MessageEvent<StdStringMessageDef>;
 
 export type Config = {
     topic: undefined | string;
@@ -56,9 +74,350 @@ function buildSettingsTree(config: Config, topics: readonly Topic[]): SettingsTr
     return { general };
 }
 
+type AlertDialogProps = {
+    text: string;
+    open: boolean;
+    setOpen: (arg0: boolean) => void;
+};
 
-export function MowerPanel(props: MowerPanelProps): JSX.Element {
-    const { context } = props;
+function AlertDialog({ text, open, setOpen }: AlertDialogProps): JSX.Element {
+
+    const handleClose = () => {
+        setOpen(false);
+    };
+
+    return (
+        <Dialog
+            open={open}
+            onClose={handleClose}
+            aria-labelledby="alert-dialog-title"
+            aria-describedby="alert-dialog-description"
+        >
+            <DialogTitle id="alert-dialog-title">
+                {"Backend Message"}
+            </DialogTitle>
+            <DialogContent>
+                <DialogContentText id="alert-dialog-description">
+                    {text}
+                </DialogContentText>
+            </DialogContent>
+            <DialogActions>
+                <Button onClick={handleClose} autoFocus>
+                    OK
+                </Button>
+            </DialogActions>
+        </Dialog>
+    );
+}
+
+type SendMsgFunc = (data: {}) => void;
+
+type ComponentProps = {
+    message?: StdStringMessage;
+    sendMsg: SendMsgFunc;
+};
+
+function AutoManualRadioGroup({ message, sendMsg }: ComponentProps): JSX.Element {
+    const [value, setValue] = React.useState('manual');
+
+    // const handleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    //     setValue((event.target as HTMLInputElement).value);
+    // };
+
+    useEffect(() => {
+        if (message) {
+            let json = JSON.parse(message?.message.data) as UIStateMsg;
+            setValue(json.state.op_mode_state);
+        }
+    }, [message]);
+
+    return (
+        <Grid container
+            maxWidth="sm"
+            alignItems="center"
+            padding={2}
+        >
+            <Grid item xs={8}>
+                <FormControl>
+                    <RadioGroup
+                        row
+                        aria-labelledby="demo-controlled-radio-buttons-group"
+                        name="controlled-radio-buttons-group"
+                        value={value}
+                    // onChange={handleChange}
+                    >
+                        <FormControlLabel disabled value="manual" control={<Radio />} label="Manual" />
+                        <FormControlLabel disabled value="auto" control={<Radio />} label="Automatic" />
+                    </RadioGroup>
+                </FormControl>
+            </Grid>
+            <Grid item xs={4}>
+                <Button sx={{ width: 1 }}
+                    onClick={() => {
+                        sendMsg({
+                            "cmd": "switch_op_mode",
+                            "displayed_value": value
+                        });
+                    }}
+                >Switch</Button>
+            </Grid>
+        </Grid>
+    );
+}
+
+
+function GeneralOptsPanel(props: ComponentProps): JSX.Element {
+    const { message, sendMsg } = props
+    const [progress, setProgress] = React.useState(0);
+    const [currSpeed, setCurrSpeed] = React.useState(0);
+    const [desiredSpeed, setDesiredSpeed] = React.useState(0);
+
+    useEffect(() => {
+        if (message) {
+            let json = JSON.parse(message?.message.data) as UIStateMsg;
+            setProgress(json.state.progress);
+            setCurrSpeed(json.state.curr_speed);
+        }
+    }, [message]);
+
+    return (
+        <Grid container
+            maxWidth="sm"
+            alignItems="center"
+            padding={2}
+        >
+            <Grid item xs={4}>
+                <InputLabel>Operation Mode:</InputLabel>
+            </Grid>
+            <Grid item xs={8}>
+                <AutoManualRadioGroup {...props} />
+            </Grid>
+            <Grid item xs={4}>
+                <InputLabel>Path Ops:</InputLabel>
+            </Grid>
+            <Grid item xs={8}>
+                <Stack direction="row" gap={2}>
+                    <Button sx={{ width: 1 }}
+                        onClick={() => {
+                            sendMsg({ "cmd": "add_poly" })
+                        }}
+                    >Add Poly</Button>
+                    <Button sx={{ width: 1 }}
+                        onClick={() => {
+                            sendMsg({ "cmd": "build_path" })
+                        }}
+                    >Build Path</Button>
+                </Stack>
+            </Grid>
+            <Grid item xs={4}>
+                <InputLabel>Robot Control:</InputLabel>
+            </Grid>
+            <Grid item xs={8}>
+                <Stack direction="row" gap={2}>
+                    <Button
+                        sx={{ width: 1 }}
+                        onClick={() => {
+                            sendMsg({ "cmd": "start" })
+                        }}
+                    >Start</Button>
+                    <Button
+                        sx={{ width: 1 }}
+                        onClick={() => {
+                            sendMsg({ "cmd": "stop" })
+                        }}
+                    >Stop</Button>
+                    <Button
+                        sx={{ width: 1 }}
+                        onClick={() => {
+                            sendMsg({ "cmd": "reset" })
+                        }}
+                    >Reset</Button>
+                </Stack>
+            </Grid>
+            <Grid item xs={4}>
+                <InputLabel>Progress:</InputLabel>
+            </Grid>
+            <Grid item xs={8}>
+                <LinearProgress variant="determinate" value={progress} />
+            </Grid>
+            <Grid item xs={4}>
+                <InputLabel>Current Speed:</InputLabel>
+            </Grid>
+            <Grid item xs={5}>
+                <TextField value={currSpeed} disabled
+                    InputProps={{
+                        endAdornment: <InputAdornment position="end">km/h</InputAdornment>,
+                    }}
+                />
+            </Grid>
+            <Grid item xs={4}>
+                <InputLabel>Desired Speed:</InputLabel>
+            </Grid>
+            <Grid item xs={5}>
+                <TextField defaultValue="5.0"
+                    InputProps={{
+                        endAdornment: <InputAdornment position="end">km/h</InputAdornment>,
+                    }}
+                    onChange={(event: React.ChangeEvent<HTMLInputElement>) => {
+                        let f = parseFloat(event.target.value);
+                        if (!isNaN(f)) {
+                            setDesiredSpeed(f);
+                        }
+                    }}
+
+                />
+            </Grid>
+            <Grid item xs={3}>
+                <Button sx={{ width: 1 }}
+                    onClick={() => {
+                        sendMsg({
+                            "cmd": "set_desired_speed",
+                            "desired_speed": desiredSpeed
+                        })
+                    }}
+                >Apply</Button>
+            </Grid>
+        </Grid >
+    );
+}
+
+function PathGenPanel({ message, sendMsg }: ComponentProps): JSX.Element {
+    const [stepSize, setStepSize] = React.useState<number>(0);
+    const [angle, setAngle] = React.useState<number>(0);
+    const [autoAngle, setAutoAngle] = React.useState<boolean>(true);
+    return (
+        <Grid container
+            maxWidth="sm"
+            alignItems="center"
+            padding={2}
+        >
+            <Grid item xs={4}>
+                <InputLabel>Step Size:</InputLabel>
+            </Grid>
+            <Grid item xs={8}>
+                <TextField defaultValue="0.5"
+                    InputProps={{
+                        endAdornment: <InputAdornment position="end">m</InputAdornment>,
+                    }}
+                    onChange={(event: React.ChangeEvent<HTMLInputElement>) => {
+                        let f = parseFloat(event.target.value);
+                        if (!isNaN(f)) {
+                            setStepSize(f);
+                        }
+                    }}
+                />
+            </Grid>
+            <Grid item xs={4}>
+                <InputLabel>Angle:</InputLabel>
+            </Grid>
+            <Grid item xs={8}>
+                <TextField disabled
+                    value={angle}
+                    InputProps={{
+                        endAdornment: <InputAdornment position="end">grad</InputAdornment>,
+                    }}
+                />
+            </Grid>
+            <Grid item xs={4}>
+            </Grid>
+            <Grid item xs={8}>
+                <Slider
+                    min={-90}
+                    max={90}
+                    step={1}
+                    defaultValue={30}
+                    onChange={(event: Event, newValue: number | number[]) => {
+                        setAngle(newValue as number);
+                    }}
+                />
+            </Grid>
+            <Grid item xs={4}>
+                <InputLabel>Auto Angle</InputLabel>
+            </Grid>
+            <Grid item xs={8}>
+                <Switch defaultChecked
+                    onChange={(event: React.ChangeEvent<HTMLInputElement>) => {
+                        setAutoAngle(event.target.checked);
+                    }}
+                />
+            </Grid>
+            <Grid item xs={12}>
+                <Button sx={{ width: 1 }}
+                    onClick={() => {
+                        sendMsg({
+                            "cmd": "set_pathgen_props",
+                            "step_size": stepSize,
+                            "angle": angle,
+                            "auto_angle": autoAngle
+                        });
+                    }}
+                >Apply</Button>
+            </Grid>
+        </Grid>
+    );
+}
+
+// TabPanel impl.
+
+interface TabPanelProps {
+    children?: React.ReactNode;
+    index: number;
+    value: number;
+}
+
+function CustomTabPanel(props: TabPanelProps) {
+    const { children, value, index, ...other } = props;
+
+    return (
+        <div
+            role="tabpanel"
+            hidden={value !== index}
+            id={`simple-tabpanel-${index}`}
+            aria-labelledby={`simple-tab-${index}`}
+            {...other}
+        >
+            {value === index && (
+                <Box sx={{ p: 3 }}>
+                    {children}
+                </Box>
+            )}
+        </div>
+    );
+}
+
+function a11yProps(index: number) {
+    return {
+        id: `simple-tab-${index}`,
+        'aria-controls': `simple-tabpanel-${index}`,
+    };
+}
+
+function BasicTabs(props: ComponentProps): JSX.Element {
+    const [value, setValue] = React.useState(0);
+
+    const handleChange = (event: React.SyntheticEvent, newValue: number) => {
+        setValue(newValue);
+    };
+
+    return (
+        <Box sx={{ width: '100%' }}>
+            <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
+                <Tabs value={value} onChange={handleChange} aria-label="basic tabs example">
+                    <Tab label="General" {...a11yProps(0)} />
+                    <Tab label="PathGen" {...a11yProps(1)} />
+                </Tabs>
+            </Box>
+            <CustomTabPanel value={value} index={0}>
+                <GeneralOptsPanel {...props} />
+            </CustomTabPanel>
+            <CustomTabPanel value={value} index={1}>
+                <PathGenPanel {...props} />
+            </CustomTabPanel>
+        </Box>
+    );
+}
+
+export function MowerPanel({ context }: MowerPanelProps): JSX.Element {
     const { saveState } = context;
 
     const [topics, setTopics] = useState<readonly Topic[]>([]);
@@ -88,17 +447,23 @@ export function MowerPanel(props: MowerPanelProps): JSX.Element {
     // setup context render handler and render done handling
     const [renderDone, setRenderDone] = useState<() => void>(() => () => { });
     const [colorScheme, setColorScheme] = useState<"dark" | "light">("light");
+    const [message, setMessage] = useState<StdStringMessage>();
 
     // color theme, renderDone
     useLayoutEffect(() => {
         context.watch("topics");
         context.watch("colorScheme");
+        context.watch("currentFrame");
 
         context.onRender = (renderState, done) => {
             setTopics(renderState.topics ?? []);
             setRenderDone(() => done);
             if (renderState.colorScheme) {
                 setColorScheme(renderState.colorScheme);
+            }
+            // Save the most recent message on our image topic.
+            if (renderState.currentFrame && renderState.currentFrame.length > 0) {
+                setMessage(renderState.currentFrame[renderState.currentFrame.length - 1] as StdStringMessage);
             }
         };
     }, [context]);
@@ -114,11 +479,10 @@ export function MowerPanel(props: MowerPanelProps): JSX.Element {
     }, [config, context, saveState, settingsActionHandler, topics]);
 
     // advertise topic
-    const { topic: currentTopic } = config;
+    // const { topic: currentTopic } = config;
+    const currentTopic = "/ui_cmd";
+
     useLayoutEffect(() => {
-        if (!currentTopic) {
-            return;
-        }
         context.advertise?.(currentTopic, "std_msgs/String", {
             datatypes: new Map([
                 ["std_msgs/String", commonDefs["std_msgs/String"]],
@@ -128,7 +492,14 @@ export function MowerPanel(props: MowerPanelProps): JSX.Element {
         return () => {
             context.unadvertise?.(currentTopic);
         };
-    }, [context, currentTopic]);
+    }, [context]);
+
+    useEffect(() => {
+        context.subscribe(["/ui_updates"]);
+        return () => {
+            context.unsubscribeAll();
+        };
+    }, [context]);
 
     // renderDone
     useLayoutEffect(() => {
@@ -136,207 +507,28 @@ export function MowerPanel(props: MowerPanelProps): JSX.Element {
     }, [renderDone]);
 
     const canPublish = context.publish != undefined;
-    const hasTopic = Boolean(currentTopic);
+    const hasTopic = true;
     // const enabled = canPublish && hasTopic;
 
-    function AutoManualRadioGroup() {
-        const [value, setValue] = React.useState('manual');
-
-        const handleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-            setValue((event.target as HTMLInputElement).value);
-        };
-
-        return (
-            <FormControl>
-                <RadioGroup
-                    row
-                    aria-labelledby="demo-controlled-radio-buttons-group"
-                    name="controlled-radio-buttons-group"
-                    value={value}
-                    onChange={handleChange}
-                >
-                    <FormControlLabel value="manual" control={<Radio />} label="Manual" />
-                    <FormControlLabel value="auto" control={<Radio />} label="Automatic" />
-                </RadioGroup>
-            </FormControl>
-        );
+    function sendMsg(data: {}): void {
+        if (canPublish && hasTopic) {
+            context.publish?.(currentTopic!, {
+                data: JSON.stringify(data)
+            });
+        }
     }
+    const [alertOpen, setAlertOpen] = React.useState(false);
+    const [alertText, setAlertText] = React.useState("");
 
-    function GeneralOptsPanel() {
-        return (
-            <Grid container
-                maxWidth="sm"
-                alignItems="center"
-                padding={2}
-            >
-                <Grid xs={4}>
-                    <InputLabel>Operation Mode:</InputLabel>
-                </Grid>
-                <Grid xs={8}>
-                    <AutoManualRadioGroup />
-                </Grid>
-                <Grid xs={4}>
-                    <InputLabel>Path Ops:</InputLabel>
-                </Grid>
-                <Grid xs={8}>
-                    <Stack direction="row" gap={2}>
-                        <Button sx={{ width: 1 }}>Add Poly</Button>
-                        <Button sx={{ width: 1 }}>Build Path</Button>
-                    </Stack>
-                </Grid>
-                <Grid xs={4}>
-                    <InputLabel>Robot Control:</InputLabel>
-                </Grid>
-                <Grid xs={8}>
-                    <Stack direction="row" gap={2}>
-                        <Button
-                            sx={{ width: 1 }}
-                            onClick={() => {
-                                if (canPublish && hasTopic) {
-                                    context.publish?.(currentTopic!, {
-                                        data: "go"
-                                    });
-                                }
-                            }}
-                        >Start</Button>
-                        <Button sx={{ width: 1 }}>Stop</Button>
-                        <Button sx={{ width: 1 }}>Reset</Button>
-                    </Stack>
-                </Grid>
-                <Grid xs={4}>
-                    <InputLabel>Progress:</InputLabel>
-                </Grid>
-                <Grid xs={8}>
-                    <LinearProgress variant="determinate" value={10} />
-                </Grid>
-                <Grid xs={4}>
-                    <InputLabel>Current Speed:</InputLabel>
-                </Grid>
-                <Grid xs={5}>
-                    <TextField defaultValue="5.0"
-                        InputProps={{
-                            endAdornment: <InputAdornment position="end">km/h</InputAdornment>,
-                        }}
-                    />
-                </Grid>
-                <Grid xs={4}>
-                    <InputLabel>Desired Speed:</InputLabel>
-                </Grid>
-                <Grid xs={5}>
-                    <TextField defaultValue="5.0"
-                        InputProps={{
-                            endAdornment: <InputAdornment position="end">km/h</InputAdornment>,
-                        }}
-                    />
-                </Grid>
-                <Grid xs={3}>
-                    <Button sx={{ width: 1 }}>Apply</Button>
-                </Grid>
-            </Grid>
-        );
-    }
-
-    function PathGenPanel() {
-        return (
-            <Grid container
-                maxWidth="sm"
-                alignItems="center"
-                padding={2}
-            >
-                <Grid xs={4}>
-                    <InputLabel>Step Size:</InputLabel>
-                </Grid>
-                <Grid xs={8}>
-                    <TextField defaultValue="0.5"
-                        InputProps={{
-                            endAdornment: <InputAdornment position="end">m</InputAdornment>,
-                        }}
-                    />
-                </Grid>
-                <Grid xs={4}>
-                    <InputLabel>Angle:</InputLabel>
-                </Grid>
-                <Grid xs={8}>
-                    <TextField defaultValue="30"
-                        InputProps={{
-                            endAdornment: <InputAdornment position="end">grad</InputAdornment>,
-                        }}
-                    />
-                </Grid>
-                <Grid xs={4}>
-                </Grid>
-                <Grid xs={8}>
-                    <Slider defaultValue={30} />
-                </Grid>
-                <Grid xs={4}>
-                    <InputLabel>Auto Angle</InputLabel>
-                </Grid>
-                <Grid xs={8}>
-                    <Switch defaultChecked />
-                </Grid>
-            </Grid>
-        );
-    }
-
-    // TabPanel impl.
-
-    interface TabPanelProps {
-        children?: React.ReactNode;
-        index: number;
-        value: number;
-    }
-
-    function CustomTabPanel(props: TabPanelProps) {
-        const { children, value, index, ...other } = props;
-
-        return (
-            <div
-                role="tabpanel"
-                hidden={value !== index}
-                id={`simple-tabpanel-${index}`}
-                aria-labelledby={`simple-tab-${index}`}
-                {...other}
-            >
-                {value === index && (
-                    <Box sx={{ p: 3 }}>
-                        {children}
-                    </Box>
-                )}
-            </div>
-        );
-    }
-
-    function a11yProps(index: number) {
-        return {
-            id: `simple-tab-${index}`,
-            'aria-controls': `simple-tabpanel-${index}`,
-        };
-    }
-
-    function BasicTabs() {
-        const [value, setValue] = React.useState(0);
-
-        const handleChange = (event: React.SyntheticEvent, newValue: number) => {
-            setValue(newValue);
-        };
-
-        return (
-            <Box sx={{ width: '100%' }}>
-                <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
-                    <Tabs value={value} onChange={handleChange} aria-label="basic tabs example">
-                        <Tab label="General" {...a11yProps(0)} />
-                        <Tab label="PathGen" {...a11yProps(1)} />
-                    </Tabs>
-                </Box>
-                <CustomTabPanel value={value} index={0}>
-                    <GeneralOptsPanel />
-                </CustomTabPanel>
-                <CustomTabPanel value={value} index={1}>
-                    <PathGenPanel />
-                </CustomTabPanel>
-            </Box>
-        );
-    }
+    useEffect(() => {
+        if (message) {
+            let json = JSON.parse(message?.message.data) as UIStateMsg;
+            if (json.error) {
+                setAlertText(json.error);
+                setAlertOpen(true);
+            }
+        }
+    }, [message]);
 
     return (
         <ThemeProvider isDark={colorScheme === "dark"}>
@@ -354,7 +546,8 @@ export function MowerPanel(props: MowerPanelProps): JSX.Element {
                 {canPublish && !hasTopic && (
                     <EmptyState>Please select a publish topic in the panel settings</EmptyState>
                 )}
-                <BasicTabs />
+                <BasicTabs message={message} sendMsg={sendMsg} />
+                <AlertDialog open={alertOpen} setOpen={setAlertOpen} text={alertText} />
             </Stack>
         </ThemeProvider>
     );
