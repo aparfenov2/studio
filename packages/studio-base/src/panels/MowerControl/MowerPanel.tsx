@@ -21,7 +21,7 @@ import { DeepPartial } from "ts-essentials";
 import { ros1 as commonDefs } from "@foxglove/rosmsg-msgs-common";
 //import { CompressedImage } from "@foxglove/schemas/schemas/typescript";
 
-import { PanelExtensionContext, RenderState, Topic, MessageEvent } from "@foxglove/studio";
+import { PanelExtensionContext, Topic, MessageEvent } from "@foxglove/studio";
 import EmptyState from "@foxglove/studio-base/components/EmptyState";
 
 import {
@@ -44,7 +44,7 @@ type StdStringMessageDef = {
 };
 
 type UIStateMsg = {
-    state: {
+    state?: {
         op_mode_state: "manual" | "auto";
         progress: number;
         curr_speed: number;
@@ -127,7 +127,9 @@ function AutoManualRadioGroup({ message, sendMsg }: ComponentProps): JSX.Element
     useEffect(() => {
         if (message) {
             let json = JSON.parse(message?.message.data) as UIStateMsg;
-            setValue(json.state.op_mode_state);
+            if (json.state) {
+                setValue(json.state?.op_mode_state);
+            }
         }
     }, [message]);
 
@@ -175,8 +177,10 @@ function GeneralOptsPanel(props: ComponentProps): JSX.Element {
     useEffect(() => {
         if (message) {
             let json = JSON.parse(message?.message.data) as UIStateMsg;
-            setProgress(json.state.progress);
-            setCurrSpeed(json.state.curr_speed);
+            if (json.state) {
+                setProgress(json.state.progress);
+                setCurrSpeed(json.state.curr_speed);
+            }
         }
     }, [message]);
 
@@ -282,6 +286,7 @@ function GeneralOptsPanel(props: ComponentProps): JSX.Element {
 }
 
 function PathGenPanel({ message, sendMsg }: ComponentProps): JSX.Element {
+    message ? 1 : 0;
     const [stepSize, setStepSize] = React.useState<number>(0);
     const [angle, setAngle] = React.useState<number>(0);
     const [autoAngle, setAutoAngle] = React.useState<boolean>(true);
@@ -326,7 +331,7 @@ function PathGenPanel({ message, sendMsg }: ComponentProps): JSX.Element {
                     max={90}
                     step={1}
                     defaultValue={30}
-                    onChange={(event: Event, newValue: number | number[]) => {
+                    onChange={(_: Event, newValue: number | number[]) => {
                         setAngle(newValue as number);
                     }}
                 />
@@ -395,7 +400,7 @@ function a11yProps(index: number) {
 function BasicTabs(props: ComponentProps): JSX.Element {
     const [value, setValue] = React.useState(0);
 
-    const handleChange = (event: React.SyntheticEvent, newValue: number) => {
+    const handleChange = (_: React.SyntheticEvent, newValue: number) => {
         setValue(newValue);
     };
 

@@ -3,7 +3,4 @@
   Per https://github.com/tsuyoshiwada/storybook-chrome-screenshot#disable-component-animation
 */
 * {
-  transition: none !important;
-  animation: none !important;
-  caret-color: transparent !important;
 }
